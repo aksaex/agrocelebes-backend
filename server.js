@@ -36,3 +36,5 @@ mongoose.connect(process.env.MONGO_URI)
     app.listen(PORT, () => console.log(`🚀 Server berjalan di port ${PORT}`));
   })
   .catch(err => console.error('❌ Gagal terhubung ke MongoDB:', err));
+
+module.exports = app;
