@@ -10,46 +10,75 @@ const rateLimit = require('express-rate-limit');
 
 const app = express();
 
-// --- WAJIB UNTUK VERCEL: AGAR RATE LIMITER BACA IP ASLI USER, BUKAN IP VERCEL ---
+// --- WAJIB UNTUK VERCEL: Agar rate limiter membaca IP asli user ---
 app.set('trust proxy', 1); 
-// -------------------------------------------------------------------------------
 
 // --- PASANG PERISAI KEAMANAN ---
-app.use(helmet()); // Menyembunyikan identitas Express dari Hacker
+app.use(helmet()); 
 
-// --- KONFIGURASI CORS DENGAN COOKIE (HttpOnly) ---
+// --- KONFIGURASI CORS (Dioptimasi untuk Debugging) ---
+const allowedOrigins = [
+    'http://localhost:5173',
+    'https://agrocelebes.vercel.app',
+    'https://www.agrocelebes.web.id',
+    'https://agrocelebes.web.id'
+];
+
 app.use(cors({
     origin: function (origin, callback) {
-        // Daftar domain pasti yang diizinkan (TAMBAHKAN DOMAIN CUSTOM DI SINI)
-        const allowedOrigins = [
-            'http://localhost:5173',
-            'https://agrocelebes.vercel.app',
-            'https://www.agrocelebes.web.id',  // Domain kustom Anda (dengan www)
-            'https://agrocelebes.web.id'       // Domain kustom Anda (tanpa www)
-        ];
+        // Log ini akan muncul di Vercel Dashboard Logs untuk membantu kita melihat domain yang masuk
+        if (origin) console.log(`✈️ Request datang dari origin: ${origin}`);
         
-        // Izinkan jika origin ada di daftar, ATAU jika origin adalah link Vercel Preview (.vercel.app), ATAU tidak ada origin (Postman)
         if (!origin || allowedOrigins.includes(origin) || origin.endsWith('.vercel.app')) {
             callback(null, true);
         } else {
+            console.error(`🚫 CORS Terblokir untuk origin: ${origin}`);
             callback(new Error('Akses diblokir oleh CORS Policy'));
         }
     },
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], // Mencegah Error OPTIONS (Preflight)
-    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie'] // Mengizinkan pengiriman Cookie & Token
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie']
 }));
 
 app.use(express.json());
-app.use(cookieParser()); // <-- AKTIFKAN MIDDLEWARE COOKIE PARSER
+app.use(cookieParser()); 
 
-// Membatasi spam request (Anti-DDoS) - Maksimal 150 request per 15 menit per IP
+// --- ANTI-SPAM (Rate Limiter) ---
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 menit
-  max: 150, 
-  message: { pesan: 'Terlalu banyak aktivitas dari IP Anda. Harap tunggu 15 menit.' }
+    windowMs: 15 * 60 * 1000, 
+    max: 150, 
+    message: { pesan: 'Terlalu banyak aktivitas. Harap tunggu 15 menit.' }
 });
-app.use('/api', limiter); // Berlakukan hanya untuk akses ke /api
+app.use('/api', limiter);
+
+// --- KONEKSI MONGODB (Optimasi Serverless) ---
+// Kita simpan status koneksi agar tidak melakukan koneksi ulang setiap kali fungsi dipanggil
+let isConnected = false;
+
+const connectDB = async () => {
+    if (isConnected) return;
+
+    try {
+        const db = await mongoose.connect(process.env.MONGO_URI, {
+            maxPoolSize: 10,
+            serverSelectionTimeoutMS: 5000,
+            socketTimeoutMS: 45000,
+            connectTimeoutMS: 10000,
+        });
+        isConnected = db.connections[0].readyState;
+        console.log('✅ MongoDB Berhasil Terhubung');
+    } catch (err) {
+        console.error('❌ Gagal terhubung ke MongoDB:', err.message);
+        // Jangan hentikan proses jika di serverless, biar request lain bisa mencoba lagi
+    }
+};
+
+// Panggil koneksi sebelum route
+app.use(async (req, res, next) => {
+    await connectDB();
+    next();
+});
 
 // --- ROUTES ---
 app.use('/api/auth', require('./routes/auth'));
@@ -59,18 +88,11 @@ app.use('/api/admin', require('./routes/admin'));
 app.use('/api/weather', require('./routes/weather'));
 app.use('/api/jurnal', require('./routes/jurnal'));
 
-const PORT = process.env.PORT || 5000;
-
-// PASANG SISTEM ANTI-BADAI DATABASE DI SINI
-mongoose.connect(process.env.MONGO_URI, {
-  maxPoolSize: 10, // Membatasi maksimal 10 jalur antrean agar MongoDB gratis tidak meledak
-  serverSelectionTimeoutMS: 5000, // Jika server sibuk, tunggu 5 detik, jangan langsung error
-  socketTimeoutMS: 45000, 
-})
-  .then(() => {
-    console.log('✅ Database MongoDB Berhasil Terhubung (Dengan Sistem Anti-Badai)!');
+// --- HANDLING UNTUK LOCAL DEVELOPMENT ---
+if (process.env.NODE_ENV !== 'production') {
+    const PORT = process.env.PORT || 5000;
     app.listen(PORT, () => console.log(`🚀 Server berjalan di port ${PORT}`));
-  })
-  .catch(err => console.error('❌ Gagal terhubung ke MongoDB:', err));
+}
 
+// --- WAJIB UNTUK VERCEL ---
 module.exports = app;
