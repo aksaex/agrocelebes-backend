@@ -14,9 +14,24 @@ const app = express();
 app.use(helmet()); // Menyembunyikan identitas Express dari Hacker
 
 // --- KONFIGURASI CORS DENGAN COOKIE (HttpOnly) ---
+// --- KONFIGURASI CORS DENGAN COOKIE (HttpOnly) ---
 app.use(cors({
-    origin: 'http://localhost:5173', // URL Frontend Anda (Sesuaikan jika berbeda saat deployment)
-    credentials: true // <-- WAJIB TRUE agar browser mau menerima dan mengirim Cookie JWT
+    origin: function (origin, callback) {
+        // Daftar domain pasti yang diizinkan
+        const allowedOrigins = [
+            'http://localhost:5173',
+            'https://agrocelebes.vercel.app',
+            'https://agrocelebes-7lh2msrw2-as-projects-d97a0b89.vercel.app',
+        ];
+        
+        // Izinkan jika origin ada di daftar, ATAU jika origin adalah link Vercel Preview (.vercel.app), ATAU tidak ada origin (Postman)
+        if (!origin || allowedOrigins.includes(origin) || origin.endsWith('.vercel.app')) {
+            callback(null, true);
+        } else {
+            callback(new Error('Akses diblokir oleh CORS Policy'));
+        }
+    },
+    credentials: true
 }));
 
 app.use(express.json());
