@@ -102,14 +102,14 @@ router.post('/login', loginLimiter, async (req, res) => {
 
     res.cookie('token', token, {
         httpOnly: true, 
-        secure: process.env.NODE_ENV === 'production', 
-        sameSite: 'strict', 
+        secure: true, // Wajib true untuk sameSite none
+        sameSite: 'none', // Diubah agar mendukung beda domain (web.id ke vercel.app)
         maxAge: 24 * 60 * 60 * 1000 
     });
 
     res.json({
       pesan: 'Login berhasil!',
-      token: token,
+      token: token, // MEMASTIKAN FRONTEND MENDAPATKAN TOKEN
       user: {
         id: user._id, nama: user.nama, email: user.email, role: user.role, 
         no_hp: user.no_hp, alamat: user.alamat, nama_perusahaan: user.nama_perusahaan 
@@ -202,13 +202,14 @@ router.post('/google', async (req, res) => {
 
         res.cookie('token', jwtToken, {
             httpOnly: true,
-            secure: process.env.NODE_ENV === 'production', 
-            sameSite: 'strict',
+            secure: true, // Wajib true untuk sameSite none
+            sameSite: 'none', // Diubah agar mendukung beda domain
             maxAge: 7 * 24 * 60 * 60 * 1000 
         });
 
         res.json({
             isNewUser: false,
+            token: jwtToken, // MEMASTIKAN FRONTEND MENDAPATKAN TOKEN VIA GOOGLE LOGIN
             user: {
                 id: user._id, 
                 nama: user.nama, 
@@ -298,8 +299,8 @@ router.put('/reset-password/:token', async (req, res) => {
 router.post('/logout', (req, res) => {
     res.clearCookie('token', {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'strict'
+        secure: true, // Wajib true untuk sameSite none
+        sameSite: 'none' // Diubah agar mendukung beda domain
     });
     res.json({ pesan: 'Berhasil logout' });
 });
