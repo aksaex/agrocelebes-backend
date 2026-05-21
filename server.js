@@ -1,7 +1,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const cookieParser = require('cookie-parser'); // <-- TAMBAHKAN INI (Library untuk membaca cookie)
+const cookieParser = require('cookie-parser');
 require('dotenv').config();
 
 // --- IMPORT SECURITY LIBRARY ---
@@ -10,17 +10,22 @@ const rateLimit = require('express-rate-limit');
 
 const app = express();
 
+// --- WAJIB UNTUK VERCEL: AGAR RATE LIMITER BACA IP ASLI USER, BUKAN IP VERCEL ---
+app.set('trust proxy', 1); 
+// -------------------------------------------------------------------------------
+
 // --- PASANG PERISAI KEAMANAN ---
 app.use(helmet()); // Menyembunyikan identitas Express dari Hacker
 
 // --- KONFIGURASI CORS DENGAN COOKIE (HttpOnly) ---
-// --- KONFIGURASI CORS DENGAN COOKIE (HttpOnly) ---
 app.use(cors({
     origin: function (origin, callback) {
-        // Daftar domain pasti yang diizinkan
+        // Daftar domain pasti yang diizinkan (TAMBAHKAN DOMAIN CUSTOM DI SINI)
         const allowedOrigins = [
             'http://localhost:5173',
             'https://agrocelebes.vercel.app',
+            'https://www.agrocelebes.web.id',  // Domain kustom Anda (dengan www)
+            'https://agrocelebes.web.id'       // Domain kustom Anda (tanpa www)
         ];
         
         // Izinkan jika origin ada di daftar, ATAU jika origin adalah link Vercel Preview (.vercel.app), ATAU tidak ada origin (Postman)
@@ -30,7 +35,9 @@ app.use(cors({
             callback(new Error('Akses diblokir oleh CORS Policy'));
         }
     },
-    credentials: true
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], // Mencegah Error OPTIONS (Preflight)
+    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie'] // Mengizinkan pengiriman Cookie & Token
 }));
 
 app.use(express.json());
@@ -38,7 +45,7 @@ app.use(cookieParser()); // <-- AKTIFKAN MIDDLEWARE COOKIE PARSER
 
 // Membatasi spam request (Anti-DDoS) - Maksimal 150 request per 15 menit per IP
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, 
+  windowMs: 15 * 60 * 1000, // 15 menit
   max: 150, 
   message: { pesan: 'Terlalu banyak aktivitas dari IP Anda. Harap tunggu 15 menit.' }
 });
