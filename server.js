@@ -21,7 +21,7 @@ app.use(cors({
         const allowedOrigins = [
             'http://localhost:5173',
             'https://agrocelebes.vercel.app',
-            'https://agrocelebes-7lh2msrw2-as-projects-d97a0b89.vercel.app',
+            'https://agrocelebes-git-revisi-keamanan-as-projects-d97a0b89.vercel.app',
         ];
         
         // Izinkan jika origin ada di daftar, ATAU jika origin adalah link Vercel Preview (.vercel.app), ATAU tidak ada origin (Postman)
