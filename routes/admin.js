@@ -34,33 +34,52 @@ router.get('/users', verifikasiToken, khususAdmin, async (req, res) => {
   }
 });
 
-// DELETE: Lenyapkan Pengguna Nakal
+// DELETE: Lenyapkan Pengguna Nakal & Bersihkan Jejak
 router.delete('/users/:id', verifikasiToken, khususAdmin, async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
     if (!user) return res.status(404).json({ pesan: 'Pengguna tidak ditemukan' });
     if (user.role === 'admin') return res.status(400).json({ pesan: 'Tidak bisa menghapus sesama Admin!' });
 
-    // 1. Cari semua produk milik user ini
+    // 1. Ambil semua produk milik user ini untuk mendata foto yang akan dihapus
     const userProducts = await Product.find({ petani_id: req.params.id });
     
-    // 2. Hancurkan SEMUA gambar produknya di Cloudinary satu per satu
-    for (const prod of userProducts) {
-      const publicId = getPublicIdFromUrl(prod.image_url);
-      if (publicId) {
-        await cloudinary.uploader.destroy(publicId); // Menembak mati foto di awan
-      }
+    // Kumpulkan semua Public ID dari foto-foto tersebut
+    const publicIdsToDelete = userProducts
+        .map(prod => getPublicIdFromUrl(prod.image_url))
+        .filter(id => id !== null);
+
+    // 2. HAPUS DI MONGODB TERLEBIH DAHULU (Prioritas Utama)
+    // Gunakan Promise.all agar penghapusan User dan Product berjalan serentak & lebih cepat
+    await Promise.all([
+        Product.deleteMany({ petani_id: req.params.id }),
+        User.findByIdAndDelete(req.params.id)
+    ]);
+
+    // Berikan respon sukses ke Frontend SEKARANG JUGA tanpa menunggu Cloudinary selesai
+    // Ini membuat aplikasi terasa sangat cepat dan responsif bagi Admin
+    res.json({ pesan: 'Pengguna dan seluruh produknya berhasil dilenyapkan dari database!' });
+
+    // 3. HAPUS FOTO DI CLOUDINARY SEBAGAI BACKGROUND PROCESS (Asinkron)
+    // Promise.allSettled memastikan jika 1 foto gagal dihapus, foto lain tetap dilanjutkan
+    if (publicIdsToDelete.length > 0) {
+        Promise.allSettled(
+            publicIdsToDelete.map(publicId => cloudinary.uploader.destroy(publicId))
+        ).then(results => {
+            // Opsional: Melacak jika ada foto yang gagal dihapus dari Cloudinary di terminal server
+            const failedDeletes = results.filter(r => r.status === 'rejected');
+            if (failedDeletes.length > 0) {
+                console.warn(`⚠️ Ada ${failedDeletes.length} foto gagal dihapus dari Cloudinary.`);
+            } else {
+                console.log(`✅ Berhasil membersihkan ${publicIdsToDelete.length} foto dari Cloudinary.`);
+            }
+        });
     }
 
-    // 3. Hapus data produk dari MongoDB
-    await Product.deleteMany({ petani_id: req.params.id });
-
-    // 4. Terakhir, Hapus akun usernya dari MongoDB
-    await User.findByIdAndDelete(req.params.id);
-
-    res.json({ pesan: 'Pengguna beserta seluruh produk dan gambarnya berhasil dilenyapkan dari server!' });
   } catch (error) {
-    res.status(500).json({ pesan: error.message });
+    console.error("Error Delete User:", error);
+    // Pastikan server tidak crash dan merespon dengan error 500 jika gagal di awal
+    res.status(500).json({ pesan: 'Gagal menghapus pengguna.', error: error.message });
   }
 });
 

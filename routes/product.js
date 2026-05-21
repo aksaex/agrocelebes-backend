@@ -50,6 +50,41 @@ router.post('/', verifikasiToken, upload.single('image'), async (req, res) => {
   }
 });
 
+// GET /api/products/stats/prices -> Mengambil rata-rata harga komoditas (Untuk Dashboard)
+router.get('/stats/prices', async (req, res) => {
+    try {
+        const stats = await Product.aggregate([
+            {
+                $group: {
+                    _id: "$kategori",
+                    rataHarga: { $avg: "$harga_per_kg" },
+                    jumlahProduk: { $sum: 1 }
+                }
+            },
+            { $sort: { jumlahProduk: -1 } } // Urutkan dari kategori yang paling banyak dijual
+        ]);
+        res.json(stats);
+    } catch (error) {
+        res.status(500).json({ pesan: 'Gagal mengambil statistik harga' });
+    }
+});
+
+// GET /api/products/stats/me -> Mengambil total produk & stok khusus milik user yang login
+router.get('/stats/me', verifikasiToken, async (req, res) => {
+    try {
+        // Cari semua produk yang petani_id-nya sama dengan user yang sedang login
+        const myProducts = await Product.find({ petani_id: req.user.id });
+        
+        const totalProduk = myProducts.length;
+        const totalStok = myProducts.reduce((acc, curr) => acc + curr.stok_kg, 0);
+        
+        res.json({ totalProduk, totalStok });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ pesan: 'Gagal mengambil statistik etalase' });
+    }
+});
+
 // 2. READ: Lihat Semua Produk (Filter B2B)
 router.get('/', verifikasiToken, async (req, res) => {
   try {
@@ -117,7 +152,7 @@ router.put('/:id', verifikasiToken, upload.single('image'), async (req, res) => 
       if (publicId) await cloudinary.uploader.destroy(publicId);
     }
 
-    const updatedProduct = await Product.findByIdAndUpdate(req.params.id, updateData, { new: true });
+    const updatedProduct = await Product.findByIdAndUpdate(req.params.id, updateData, { returnDocument: 'after' });
     res.json({ pesan: 'Produk berhasil diperbarui!', data: updatedProduct });
   } catch (error) {
     res.status(500).json({ pesan: 'Gagal memperbarui produk', error: error.message });
