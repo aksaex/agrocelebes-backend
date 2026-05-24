@@ -1,10 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Jurnal = require('../models/Jurnal');
-
-// PERBAIKAN: Mengubah pemanggilan file agar sesuai dengan nama file Anda (authMiddleware.js)
-const auth = require('../middleware/authMiddleware'); 
-
+const { verifikasiToken: auth } = require('../middleware/authMiddleware');
 // 1. AMBIL SEMUA DATA JURNAL MILIK PETANI YANG LOGIN
 router.get('/', auth, async (req, res) => {
     try {

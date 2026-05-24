@@ -14,7 +14,10 @@ const app = express();
 app.set('trust proxy', 1); 
 
 // --- PASANG PERISAI KEAMANAN ---
-app.use(helmet()); 
+///app.use(helmet()); 
+app.use(helmet({
+  crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" }
+}));
 
 // --- KONFIGURASI CORS (Dioptimasi untuk Debugging) ---
 const allowedOrigins = [
@@ -26,19 +29,20 @@ const allowedOrigins = [
 
 app.use(cors({
     origin: function (origin, callback) {
-        // Log ini akan muncul di Vercel Dashboard Logs untuk membantu kita melihat domain yang masuk
-        if (origin) console.log(`✈️ Request datang dari origin: ${origin}`);
-        
-        if (!origin || allowedOrigins.includes(origin) || origin.endsWith('.vercel.app')) {
+        // !origin memungkinkan request dari browser yang tidak mengirim origin (misal: Postman/Curl)
+        // Jika ingin super ketat, hapus !origin
+        if (!origin || allowedOrigins.includes(origin)) {
             callback(null, true);
         } else {
-            console.error(`🚫 CORS Terblokir untuk origin: ${origin}`);
+            console.error(`🚫 CORS Terblokir: ${origin}`);
             callback(new Error('Akses diblokir oleh CORS Policy'));
         }
     },
-    credentials: true,
+    credentials: true, // WAJIB untuk mengirim Cookie (HttpOnly)
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie']
+    allowedHeaders: ['Content-Type', 'Authorization'] 
+    // Catatan: 'Cookie' tidak perlu dimasukkan di allowedHeaders secara manual, 
+    // karena browser yang mengelola cookie secara otomatis via credentials: true
 }));
 
 app.use(express.json());

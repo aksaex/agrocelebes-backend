@@ -1,6 +1,6 @@
 const express = require('express');
 const Product = require('../models/Product');
-const verifikasiToken = require('../middleware/authMiddleware');
+const { verifikasiToken } = require('../middleware/authMiddleware');;
 
 // IMPORT BARU: Ambil upload dan cloudinary
 const { upload, cloudinary } = require('../config/cloudinary');

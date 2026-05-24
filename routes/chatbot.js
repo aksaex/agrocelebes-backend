@@ -1,8 +1,7 @@
 const express = require('express');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const multer = require('multer');
-const verifikasiToken = require('../middleware/authMiddleware');
-
+const { verifikasiToken } = require('../middleware/authMiddleware');
 const router = express.Router();
 
 // Gunakan penyimpanan memory (RAM) sementara agar file bisa langsung dikirim ke Gemini tanpa disimpan ke harddisk

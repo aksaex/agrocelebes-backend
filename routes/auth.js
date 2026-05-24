@@ -2,12 +2,16 @@ const express = require('express');
 const bcrypt = require('bcryptjs'); 
 const jwt = require('jsonwebtoken');
 const User = require('../models/User'); 
-const verifikasiToken = require('../middleware/authMiddleware'); 
+const { verifikasiToken } = require('../middleware/authMiddleware');
+const sendEmail = require('../utils/sendEmail'); 
 
 // --- 1. IMPORT RATE LIMITER ---
 const rateLimit = require('express-rate-limit'); 
 
 const router = express.Router();
+
+// Cek apakah server berjalan di Vercel (Production) atau Localhost (Development)
+const isProduction = process.env.NODE_ENV === 'production';
 
 // --- KEAMANAN TINGKAT DEPAN (FAIL-SAFE) ---
 if (!process.env.JWT_SECRET) {
@@ -19,7 +23,7 @@ if (!process.env.JWT_SECRET) {
 // --- 2. KONFIGURASI RATE LIMITER ---
 const loginLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 menit
-    max: 5, // Maksimal 5x coba
+    max: 50, // Maksimal 50x coba
     message: { pesan: 'Terlalu banyak percobaan login gagal. Silakan coba lagi setelah 15 menit.' },
     standardHeaders: true,
     legacyHeaders: false,
@@ -27,7 +31,7 @@ const loginLimiter = rateLimit({
 
 const forgotPasswordLimiter = rateLimit({
     windowMs: 60 * 60 * 1000, // 1 Jam
-    max: 3, // Maksimal 3x request email
+    max: 30, // Maksimal 30x request email
     message: { pesan: 'Terlalu banyak permintaan reset sandi. Silakan coba lagi dalam 1 jam ke depan.' },
     standardHeaders: true,
     legacyHeaders: false,
@@ -100,10 +104,11 @@ router.post('/login', loginLimiter, async (req, res) => {
       { expiresIn: '1d' }
     );
 
+    // 👇 REVISI COOKIE CERDAS UNTUK LOCALHOST & VERCEL
     res.cookie('token', token, {
         httpOnly: true, 
-        secure: true, // Wajib true untuk sameSite none
-        sameSite: 'none', // Diubah agar mendukung beda domain (web.id ke vercel.app)
+        secure: isProduction, // Hanya true jika di Vercel (HTTPS)
+        sameSite: isProduction ? 'none' : 'lax', // 'none' di Vercel, 'lax' di Localhost
         maxAge: 24 * 60 * 60 * 1000 
     });
 
@@ -200,16 +205,17 @@ router.post('/google', async (req, res) => {
             { expiresIn: '7d' } 
         );
 
+        // 👇 REVISI COOKIE CERDAS UNTUK GOOGLE LOGIN
         res.cookie('token', jwtToken, {
             httpOnly: true,
-            secure: true, // Wajib true untuk sameSite none
-            sameSite: 'none', // Diubah agar mendukung beda domain
+            secure: isProduction, // Cerdas membaca env
+            sameSite: isProduction ? 'none' : 'lax', // Cerdas membaca env
             maxAge: 7 * 24 * 60 * 60 * 1000 
         });
 
         res.json({
             isNewUser: false,
-            token: jwtToken, // MEMASTIKAN FRONTEND MENDAPATKAN TOKEN VIA GOOGLE LOGIN
+            token: jwtToken, 
             user: {
                 id: user._id, 
                 nama: user.nama, 
@@ -229,40 +235,57 @@ router.post('/google', async (req, res) => {
 });
 
 // =========================================================================
-// 5. LUPA PASSWORD
+// 5. LUPA SANDI (Request Link via Nodemailer) - PREMIUM UI WITH FIXED ONLINE LOGO
 // =========================================================================
 router.post('/forgot-password', forgotPasswordLimiter, async (req, res) => {
     try {
         const { email } = req.body;
         
-        // Mengamankan dari NoSQL Injection dengan String(email)
+        // Mengamankan dari NoSQL Injection
         const user = await User.findOne({ email: String(email) });
         if (!user) {
-            return res.status(404).json({ pesan: 'Email tidak ditemukan di sistem kami.' });
+            return res.status(404).json({ pesan: 'Email tidak terdaftar.' });
         }
 
-        const resetToken = jwt.sign(
-            { id: user._id }, 
-            process.env.JWT_SECRET, 
-            { expiresIn: '15m' }
-        );
+        const resetToken = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '15m' });
+        const resetLink = `${process.env.FRONTEND_URL || 'https://www.agrocelebes.web.id'}/reset-password/${resetToken}`;
+        const logoUrl = 'https://www.agrocelebes.web.id/logo.png';
 
-        const resetLink = `http://localhost:5173/reset-password/${resetToken}`;
+        const message = `
+            <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7f6; padding: 40px 20px; margin: 0;">
+                <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; padding: 40px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); border: 1px solid #eaeaea;">
+                    
+                    <div style="text-align: center; margin-bottom: 25px;">
+                        <img src="${logoUrl}" alt="Logo AgroCelebes" style="max-height: 70px; width: auto; display: block; margin: 0 auto;" />
+                    </div>
 
-        console.log(`\n\n📧 ====== SIMULASI PENGIRIMAN EMAIL ======`);
-        console.log(`Kepada : ${user.email}`);
-        console.log(`Subjek : Pemulihan Sandi Akun AgroCelebes`);
-        console.log(`Pesan  : Halo ${user.nama}, klik tautan rahasia di bawah ini untuk mereset sandi Anda:`);
-        console.log(`Link   : ${resetLink}`);
-        console.log(`==========================================\n\n`);
+                    <h2 style="color: #2E7D32; text-align: center; font-size: 22px; margin-bottom: 20px; font-weight: 700;">Pemulihan Sandi Akun</h2>
+                    
+                    <p style="color: #333333; font-size: 15px; line-height: 1.6; margin-bottom: 10px;">Halo <strong>${user.nama}</strong>,</p>
+                    <p style="color: #555555; font-size: 15px; line-height: 1.6; margin-bottom: 25px;">Kami menerima permintaan untuk mengatur ulang kata sandi akun AgroCelebes Anda. Silakan klik tombol di bawah ini untuk melanjutkan proses pemulihan:</p>
+                    
+                    <div style="text-align: center; margin: 35px 0;">
+                        <a href="${resetLink}" style="background-color: #2E7D32; color: #ffffff; padding: 14px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 15px; display: inline-block; box-shadow: 0 4px 10px rgba(46, 125, 50, 0.25);">Reset Kata Sandi</a>
+                    </div>
+                    
+                    <hr style="border: none; border-top: 1px solid #eaeaea; margin: 30px 0;" />
+                    
+                    <p style="color: #888888; font-size: 12.5px; text-align: center; line-height: 1.5; margin-bottom: 15px;">Tautan ini dibuat secara otomatis dan hanya berlaku selama <strong>15 menit</strong> demi keamanan akun Anda. Jika Anda tidak merasa membuat permintaan ini, abaikan dan hapus email ini dengan aman.</p>
+                    <p style="color: #aaaaaa; font-size: 11.5px; text-align: center; margin-top: 20px; margin-bottom: 0;">&copy; ${new Date().getFullYear()} AgroCelebes. Hak Cipta Dilindungi.</p>
+                </div>
+            </div>
+        `;
 
-        res.json({ 
-            pesan: 'Tautan pemulihan sandi telah dikirim ke email Anda! Silakan cek kotak masuk atau folder spam.'
+        await sendEmail({
+            email: user.email,
+            subject: '🔑 Instruksi Reset Sandi AgroCelebes',
+            message
         });
 
+        res.json({ pesan: 'Tautan pemulihan sandi telah dikirim ke email Anda!' });
     } catch (error) {
         console.error("Error Forgot Password:", error);
-        res.status(500).json({ pesan: 'Terjadi kesalahan pada server backend.' });
+        res.status(500).json({ pesan: 'Terjadi kesalahan pada server backend saat mengirim email.' });
     }
 });
 
@@ -297,10 +320,11 @@ router.put('/reset-password/:token', async (req, res) => {
 // 7. ENDPOINT LOGOUT (Menghapus Cookie)
 // =========================================================================
 router.post('/logout', (req, res) => {
+    // 👇 REVISI COOKIE CERDAS UNTUK LOGOUT
     res.clearCookie('token', {
         httpOnly: true,
-        secure: true, // Wajib true untuk sameSite none
-        sameSite: 'none' // Diubah agar mendukung beda domain
+        secure: isProduction, 
+        sameSite: isProduction ? 'none' : 'lax'
     });
     res.json({ pesan: 'Berhasil logout' });
 });

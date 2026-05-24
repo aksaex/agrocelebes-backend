@@ -1,7 +1,7 @@
 const express = require('express');
 const User = require('../models/User');
 const Product = require('../models/Product');
-const verifikasiToken = require('../middleware/authMiddleware');
+const { verifikasiToken } = require('../middleware/authMiddleware');
 
 // IMPORT Cloudinary
 const { cloudinary } = require('../config/cloudinary');

@@ -1,23 +1,34 @@
 const nodemailer = require('nodemailer');
 
 const sendEmail = async (options) => {
-  // Kita gunakan SMTP Gmail sebagai pengirim
-  const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-      user: process.env.EMAIL_USER, // Email developer (Gmail Anda)
-      pass: process.env.EMAIL_PASS  // App Password dari Gmail
+    // 👇 DETEKSI DINI: Cek apakah env terbaca oleh Vercel
+    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+        console.error("🔴 ERROR: EMAIL_USER atau EMAIL_PASS kosong/tidak terbaca di .env!");
+        throw new Error("Konfigurasi email server belum diatur (ENV kosong).");
     }
-  });
 
-  const mailOptions = {
-    from: 'AgroCelebes Support <no-reply@agrocelebes.com>',
-    to: options.email,
-    subject: options.subject,
-    html: options.message, // Kita pakai format HTML agar tampilan email rapi
-  };
+    // Gunakan Host & Port eksplisit agar Vercel tidak diblokir
+    const transporter = nodemailer.createTransport({
+        host: 'smtp.gmail.com',
+        port: 465,
+        secure: true, // true untuk port 465
+        auth: {
+            user: process.env.EMAIL_USER, 
+            pass: process.env.EMAIL_PASS  
+        },
+        tls: {
+            rejectUnauthorized: false 
+        }
+    });
 
-  await transporter.sendMail(mailOptions);
+    const mailOptions = {
+        from: `"AgroCelebes" <${process.env.EMAIL_USER}>`, 
+        to: options.email,
+        subject: options.subject,
+        html: options.message
+    };
+
+    await transporter.sendMail(mailOptions);
 };
 
 module.exports = sendEmail;
