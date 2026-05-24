@@ -71,18 +71,39 @@ router.get('/stats/prices', async (req, res) => {
 
 // GET /api/products/stats/me -> Mengambil total produk & stok khusus milik user yang login
 router.get('/stats/me', verifikasiToken, async (req, res) => {
-    try {
-        // Cari semua produk yang petani_id-nya sama dengan user yang sedang login
-        const myProducts = await Product.find({ petani_id: req.user.id });
-        
-        const totalProduk = myProducts.length;
-        const totalStok = myProducts.reduce((acc, curr) => acc + curr.stok_kg, 0);
-        
-        res.json({ totalProduk, totalStok });
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ pesan: 'Gagal mengambil statistik etalase' });
-    }
+    try {
+        // Cari semua produk yang petani_id-nya sama dengan user yang sedang login
+        const myProducts = await Product.find({ petani_id: req.user.id });
+        
+        const totalProduk = myProducts.length;
+        const totalStok = myProducts.reduce((acc, curr) => acc + curr.stok_kg, 0);
+        
+        res.json({ totalProduk, totalStok });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ pesan: 'Gagal mengambil statistik etalase' });
+    }
+});
+
+// =============================================
+// TAMBAHKAN ENDPOINT INI DI SINI (SETELAH stats/me)
+// =============================================
+// GET /api/products/latest -> Mengambil produk yang diposting hari ini
+router.get('/latest', verifikasiToken, async (req, res) => {
+    try {
+        const startOfToday = new Date();
+        startOfToday.setHours(0, 0, 0, 0);
+
+        const latestProducts = await Product.find({ createdAt: { $gte: startOfToday } })
+            .populate('petani_id', 'nama')
+            .sort({ createdAt: -1 })
+            .limit(4); // Ambil maksimal 4 produk terbaru hari ini
+
+        res.json(latestProducts);
+    } catch (error) {
+        console.error(error); // Tambahkan log error
+        res.status(500).json({ pesan: 'Gagal memuat produk terbaru.' });
+    }
 });
 
 // 2. READ: Lihat Semua Produk (Filter B2B)

@@ -39,12 +39,11 @@ const forgotPasswordLimiter = rateLimit({
 
 const registerLimiter = rateLimit({
     windowMs: 60 * 60 * 1000, // 1 Jam
-    max: 5, // Maksimal 5 akun baru per IP
+    max: 11, // Maksimal 5 akun baru per IP
     message: { pesan: 'Anda telah membuat terlalu banyak akun. Silakan coba lagi nanti.' },
     standardHeaders: true,
     legacyHeaders: false,
 });
-// -----------------------------------
 
 // =========================================================================
 // 1. ENDPOINT REGISTER (Mendaftar Akun Baru)
@@ -53,6 +52,33 @@ router.post('/register', registerLimiter, async (req, res) => {
   try {
     const { nama, email, password, role, no_hp, alamat, nama_perusahaan, koordinat_lokasi } = req.body;
 
+    // VALIDASI EMAIL SEDERHANA TAPI KETAT
+    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    if (!emailRegex.test(email)) {
+        return res.status(400).json({ 
+            pesan: 'Format email tidak valid! Contoh: nama@gmail.com, nama@yahoo.co.id' 
+        });
+    }
+
+    // Validasi tambahan: cek domain yang umum digunakan
+    const validEmailDomains = [
+        'gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 
+        'live.com', 'icloud.com', 'protonmail.com',
+        'co.id', 'ac.id', 'sch.id', 'go.id'  // Domain Indonesia
+    ];
+
+    const emailDomain = email.split('@')[1];
+    const isValidDomain = validEmailDomains.some(domain => 
+        emailDomain === domain || emailDomain.endsWith('.' + domain)
+    );
+
+    if (!isValidDomain) {
+        return res.status(400).json({ 
+            pesan: 'Domain email tidak dikenal! Gunakan domain umum seperti gmail.com, yahoo.com, atau co.id.' 
+        });
+    }
+
+    // VALIDASI SANDI
     const passwordRegex = /^(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
     if (!passwordRegex.test(password)) {
         return res.status(400).json({ 
@@ -64,6 +90,14 @@ router.post('/register', registerLimiter, async (req, res) => {
     const existingUser = await User.findOne({ email: String(email) });
     if (existingUser) {
       return res.status(400).json({ pesan: 'Email sudah digunakan!' });
+    }
+
+    // INTEGRASI: SATPAM PENGECEK DUPLIKAT NOMOR HP SAAT DAFTAR MANUAL
+    if (no_hp) {
+      const existingHp = await User.findOne({ no_hp: String(no_hp) });
+      if (existingHp) {
+        return res.status(400).json({ pesan: 'Nomor HP sudah digunakan oleh akun lain!' });
+      }
     }
 
     const salt = await bcrypt.genSalt(10);
@@ -130,21 +164,37 @@ router.post('/login', loginLimiter, async (req, res) => {
 // =========================================================================
 router.put('/profile', verifikasiToken, async (req, res) => {
   try {
-    const { nama, no_hp, alamat, nama_perusahaan } = req.body;
+    const { nama, no_hp, alamat, nama_perusahaan, koordinat_lokasi } = req.body;
     
-    const waRegex = /^(\+62|62|0)8[1-9][0-9]{6,11}$/;
-    if (!waRegex.test(no_hp)) {
+    // Validasi Regex
+    const waRegex = /^(\+62|62|0)[0-9]{8,13}$/;
+    if (no_hp && !waRegex.test(no_hp)) {
       return res.status(400).json({ pesan: 'Format nomor WhatsApp tidak valid.' });
+    }
+
+    // 👇 INTEGRASI: SATPAM PENGECEK DUPLIKAT NOMOR HP SAAT EDIT PROFIL
+    // Cari apakah ada user LAIN (id berbeda) yang pakai nomor HP ini
+    if (no_hp) {
+      const existingHp = await User.findOne({ no_hp: String(no_hp), _id: { $ne: req.user.id } });
+      if (existingHp) {
+        return res.status(400).json({ pesan: 'Gagal! Nomor HP ini sudah digunakan oleh akun lain.' });
+      }
     }
 
     const updatedUser = await User.findByIdAndUpdate(
       req.user.id,
-      { nama, no_hp, alamat, nama_perusahaan },
-      { returnDocument: 'after' }
-    ).select('-password'); 
+      { nama, no_hp, alamat, nama_perusahaan, koordinat_lokasi },
+      { returnDocument: 'after', runValidators: true } // Memastikan data terbaru kembali ke frontend
+    ).select('-password');
 
     res.json({ pesan: 'Profil berhasil diperbarui!', user: updatedUser });
   } catch (error) {
+    // 👇 PENCEGAT ERROR DUPLIKAT DARI MONGODB (KODE 11000) - Tetap dipertahankan sebagai fail-safe cadangan
+    if (error.code === 11000) {
+       return res.status(400).json({ pesan: 'Gagal! Nomor HP atau Email ini sudah digunakan oleh akun lain.' });
+    }
+    
+    console.error("Error Update Profil:", error);
     res.status(500).json({ pesan: 'Gagal memperbarui profil.', error: error.message });
   }
 });
@@ -182,16 +232,26 @@ router.post('/google', async (req, res) => {
         }
 
         if (!user && role) {
+            // 👇 SATPAM PENGECEK DUPLIKAT KHUSUS GOOGLE LOGIN (TAMBAHKAN INI)
+            if (no_hp) {
+                const existingHp = await User.findOne({ no_hp: String(no_hp) });
+                if (existingHp) {
+                    return res.status(400).json({ pesan: 'Gagal! Nomor HP ini sudah digunakan oleh akun lain.' });
+                }
+            }
             const randomPassword = Math.random().toString(36).slice(-8) + "Agro!23";
             const salt = await bcrypt.genSalt(10);
             const hashedPassword = await bcrypt.hash(randomPassword, salt);
+
+            // 👇 INTEGRASI: GENERATE NOMOR SEMENTARA ACAK UNTUK PENGGUNA BARU VIA GOOGLE
+            const randomHp = `0800${Math.floor(10000000 + Math.random() * 90000000)}`;
 
             user = new User({
                 nama: name,
                 email: email,
                 password: hashedPassword,
                 role, 
-                no_hp: no_hp || '080000000000',
+                no_hp: no_hp || randomHp, // Menggunakan nomor acak unik jika tidak dikirim dari FE
                 alamat: alamat || 'Belum diatur',
                 nama_perusahaan: role === 'pembeli' ? nama_perusahaan : '',
                 koordinat_lokasi: koordinat_lokasi || null
@@ -235,7 +295,7 @@ router.post('/google', async (req, res) => {
 });
 
 // =========================================================================
-// 5. LUPA SANDI (Request Link via Nodemailer) - PREMIUM UI WITH FIXED ONLINE LOGO
+// 5. LUKA SANDI (Request Link via Nodemailer) - PREMIUM UI WITH FIXED ONLINE LOGO
 // =========================================================================
 router.post('/forgot-password', forgotPasswordLimiter, async (req, res) => {
     try {

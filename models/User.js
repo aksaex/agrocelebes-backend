@@ -6,7 +6,11 @@ const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
   role: { type: String, enum: ['petani', 'pembeli', 'admin'], required: true }, // Ditambah role 'admin'
-  no_hp: { type: String, required: true },
+  no_hp: {
+    type: String,
+    required: true,
+    unique: true // <--- TAMBAHKAN INI AGAR TIDAK ADA NOMOR KEMBAR
+  },
   alamat: { type: String },
   
   // --- FITUR PROFESIONAL BARU ---
