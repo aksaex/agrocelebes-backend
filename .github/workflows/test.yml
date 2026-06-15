@@ -1,0 +1,36 @@
+name: Backend CI Pipeline
+
+on:
+  push:
+    branches: [ "main", "master", "pengujian" ] # <-- Tambahkan pengujian di sini
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    # Kita pinjam database MongoDB virtual dari GitHub untuk testing
+    services:
+      mongodb:
+        image: mongo:latest
+        ports:
+          - 27017:27017
+
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '20'
+        
+    - name: Install Dependencies
+      run: npm install
+      
+    - name: Run Tests
+      env:
+        # Pura-pura konek ke MongoDB GitHub dan pakai JWT rahasia
+        MONGO_URI: mongodb://localhost:27017/testdb
+        JWT_SECRET: testing_secret_123
+      run: npm test
