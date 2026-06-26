@@ -2,7 +2,7 @@ name: Backend CI Pipeline
 
 on:
   push:
-    branches: [ "main", "master", "pengujian" ] # <-- Tambahkan pengujian di sini
+    branches: [ "main", "master", "pengujian" ]
   pull_request:
     branches: [ "main", "master" ]
 
@@ -10,7 +10,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
-    # Kita pinjam database MongoDB virtual dari GitHub untuk testing
+    # Meminjam database MongoDB virtual dari GitHub untuk testing
     services:
       mongodb:
         image: mongo:latest
@@ -28,9 +28,14 @@ jobs:
     - name: Install Dependencies
       run: npm install
       
-    - name: Run Tests
+    - name: Run Regression Tests & Coverage
       env:
-        # Pura-pura konek ke MongoDB GitHub dan pakai JWT rahasia
+        # Dummy Variables agar aplikasi tidak crash karena kehilangan .env
         MONGO_URI: mongodb://localhost:27017/testdb
         JWT_SECRET: testing_secret_123
-      run: npm test
+        CLOUDINARY_CLOUD_NAME: dummy_cloud
+        CLOUDINARY_API_KEY: dummy_key
+        CLOUDINARY_API_SECRET: dummy_secret
+        GEMINI_API_KEY: dummy_gemini_key
+      # Mengubah perintah agar GitHub menampilkan tabel Code Coverage
+      run: npm run test:coverage
