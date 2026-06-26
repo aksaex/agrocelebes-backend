@@ -3,15 +3,15 @@
 <html lang="en">
 
 <head>
-    <title>Code coverage report for agrocelebes-backend/routes/jurnal.js</title>
+    <title>Code coverage report for routes/jurnal.js</title>
     <meta charset="utf-8" />
-    <link rel="stylesheet" href="../../prettify.css" />
-    <link rel="stylesheet" href="../../base.css" />
-    <link rel="shortcut icon" type="image/x-icon" href="../../favicon.png" />
+    <link rel="stylesheet" href="../prettify.css" />
+    <link rel="stylesheet" href="../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <style type='text/css'>
         .coverage-summary .sorter {
-            background-image: url(../../sort-arrow-sprite.png);
+            background-image: url(../sort-arrow-sprite.png);
         }
     </style>
 </head>
@@ -19,13 +19,13 @@
 <body>
 <div class='wrapper'>
     <div class='pad1'>
-        <h1><a href="../../index.html">All files</a> / <a href="index.html">agrocelebes-backend/routes</a> jurnal.js</h1>
+        <h1><a href="../index.html">All files</a> / <a href="index.html">routes</a> jurnal.js</h1>
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">34.61% </span>
+                <span class="strong">61.53% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>9/26</span>
+                <span class='fraction'>16/26</span>
             </div>
         
             
@@ -37,16 +37,16 @@
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">0% </span>
+                <span class="strong">50% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>0/4</span>
+                <span class='fraction'>2/4</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">34.61% </span>
+                <span class="strong">61.53% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>9/26</span>
+                <span class='fraction'>16/26</span>
             </div>
         
             
@@ -61,7 +61,7 @@
             </div>
         </template>
     </div>
-    <div class='status-line low'></div>
+    <div class='status-line medium'></div>
     <pre><table class="coverage">
 <tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
 <a name='L2'></a><a href='#L2'>2</a>
@@ -117,9 +117,9 @@
 <span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -127,15 +127,15 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -164,26 +164,26 @@ const router = express.Router();
 const Jurnal = require('../models/Jurnal');
 const { verifikasiToken: auth } = require('../middleware/authMiddleware');
 // 1. AMBIL SEMUA DATA JURNAL MILIK PETANI YANG LOGIN
-router.get('/', auth, <span class="fstat-no" title="function not covered" >as</span>ync (req, res) =&gt; {
-<span class="cstat-no" title="statement not covered" >    try {</span>
-        const data = <span class="cstat-no" title="statement not covered" >await Jurnal.find({ petani_id: req.user.id }).sort({ tanggal: -1 });</span>
-<span class="cstat-no" title="statement not covered" >        res.json(data);</span>
+router.get('/', auth, async (req, res) =&gt; {
+    try {
+        const data = await Jurnal.find({ petani_id: req.user.id }).sort({ tanggal: -1 });
+        res.json(data);
     } catch (error) {
 <span class="cstat-no" title="statement not covered" >        res.status(500).json({ pesan: 'Gagal mengambil data jurnal' });</span>
     }
 });
 &nbsp;
 // 2. TAMBAH CATATAN BARU (KAS / JADWAL)
-router.post('/', auth, <span class="fstat-no" title="function not covered" >as</span>ync (req, res) =&gt; {
-<span class="cstat-no" title="statement not covered" >    try {</span>
-        const newJurnal = <span class="cstat-no" title="statement not covered" >new Jurnal({</span>
+router.post('/', auth, async (req, res) =&gt; {
+    try {
+        const newJurnal = new Jurnal({
             ...req.body,
             petani_id: req.user.id
         });
-<span class="cstat-no" title="statement not covered" >        await newJurnal.save();</span>
+        await newJurnal.save();
 <span class="cstat-no" title="statement not covered" >        res.status(201).json(newJurnal);</span>
     } catch (error) {
-<span class="cstat-no" title="statement not covered" >        res.status(500).json({ pesan: 'Gagal menyimpan catatan' });</span>
+        res.status(500).json({ pesan: 'Gagal menyimpan catatan' });
     }
 });
 &nbsp;
@@ -214,16 +214,16 @@ module.exports = router;</pre></td></tr></table></pre>
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-06-25T13:22:33.783Z
+                at 2026-06-26T02:18:52.917Z
             </div>
-        <script src="../../prettify.js"></script>
+        <script src="../prettify.js"></script>
         <script>
             window.onload = function () {
                 prettyPrint();
             };
         </script>
-        <script src="../../sorter.js"></script>
-        <script src="../../block-navigation.js"></script>
+        <script src="../sorter.js"></script>
+        <script src="../block-navigation.js"></script>
     </body>
 </html>
     

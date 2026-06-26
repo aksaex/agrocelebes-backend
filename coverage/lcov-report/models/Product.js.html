@@ -3,15 +3,15 @@
 <html lang="en">
 
 <head>
-    <title>Code coverage report for agrocelebes-backend/models/User.js</title>
+    <title>Code coverage report for models/Product.js</title>
     <meta charset="utf-8" />
-    <link rel="stylesheet" href="../../prettify.css" />
-    <link rel="stylesheet" href="../../base.css" />
-    <link rel="shortcut icon" type="image/x-icon" href="../../favicon.png" />
+    <link rel="stylesheet" href="../prettify.css" />
+    <link rel="stylesheet" href="../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <style type='text/css'>
         .coverage-summary .sorter {
-            background-image: url(../../sort-arrow-sprite.png);
+            background-image: url(../sort-arrow-sprite.png);
         }
     </style>
 </head>
@@ -19,7 +19,7 @@
 <body>
 <div class='wrapper'>
     <div class='pad1'>
-        <h1><a href="../../index.html">All files</a> / <a href="index.html">agrocelebes-backend/models</a> User.js</h1>
+        <h1><a href="../index.html">All files</a> / <a href="index.html">models</a> Product.js</h1>
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
@@ -93,7 +93,16 @@
 <a name='L28'></a><a href='#L28'>28</a>
 <a name='L29'></a><a href='#L29'>29</a>
 <a name='L30'></a><a href='#L30'>30</a>
-<a name='L31'></a><a href='#L31'>31</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">1x</span>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -123,53 +132,71 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">1x</span></td><td class="text"><pre class="prettyprint lang-js">const mongoose = require('mongoose');
 &nbsp;
-const userSchema = new mongoose.Schema({
-  // --- DATA DASAR ---
-  nama: { type: String, required: true },
-  email: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
-  role: { type: String, enum: ['petani', 'pembeli', 'admin'], required: true }, // Ditambah role 'admin'
-  no_hp: {
+const productSchema = new mongoose.Schema({
+  petani_id: { 
+    type: mongoose.Schema.Types.ObjectId, 
+    ref: 'User', 
+    required: true 
+  },
+  nama_komoditas: { 
+    type: String, 
+    required: true 
+  }, // contoh: Biji Kopi Toraja
+  kategori: { 
+    type: String, 
+    required: true 
+  }, // contoh: Kopi, Kakao, Rempah
+  harga_per_kg: { 
+    type: Number, 
+    required: true 
+  },
+  stok_kg: { 
+    type: Number, 
+    required: true 
+  },
+  deskripsi: { 
+    type: String 
+  },
+  image_url: { 
+    type: String 
+  }, // Nanti diisi link dari Cloudinary
+  
+  // 👇 INI DIA KUNCI PERBAIKANNYA (Menambahkan lokasi_lahan) 👇
+  lokasi_lahan: {
     type: String,
-    required: true,
-    unique: true // &lt;--- TAMBAHKAN INI AGAR TIDAK ADA NOMOR KEMBAR
-  },
-  alamat: { type: String },
-  
-  // --- FITUR PROFESIONAL BARU ---
-  nama_perusahaan: { type: String }, // Khusus untuk pembeli B2B
-  
-  koordinat_lokasi: {                // Untuk fitur anti-penipuan (Geolocation) saat daftar
-    lat: { type: Number },
-    lng: { type: Number }
-  },
-  
-  isVerified: { type: Boolean, default: false }, // Mencegah akun bot/spam (Verifikasi Email)
-  
-  resetPasswordToken: { type: String },          // Token unik untuk fitur Lupa Password
-  resetPasswordExpire: { type: Date }            // Batas waktu kadaluarsa token reset sandi (misal: 10 menit)
+    default: ''
+  }
   
 }, { timestamps: true });
 &nbsp;
-module.exports = mongoose.model('User', userSchema);</pre></td></tr></table></pre>
+module.exports = mongoose.model('Product', productSchema);</pre></td></tr></table></pre>
 
                 <div class='push'></div><!-- for sticky footer -->
             </div><!-- /wrapper -->
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-06-25T13:22:33.783Z
+                at 2026-06-26T12:04:53.961Z
             </div>
-        <script src="../../prettify.js"></script>
+        <script src="../prettify.js"></script>
         <script>
             window.onload = function () {
                 prettyPrint();
             };
         </script>
-        <script src="../../sorter.js"></script>
-        <script src="../../block-navigation.js"></script>
+        <script src="../sorter.js"></script>
+        <script src="../block-navigation.js"></script>
     </body>
 </html>
     
