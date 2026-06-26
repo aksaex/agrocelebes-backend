@@ -27,9 +27,9 @@ router.post('/', verifikasiToken, upload.single('image'), async (req, res) => {
         if (!nama_komoditas || !kategori || !harga_per_kg || !stok_kg) {
             return res.status(400).json({ pesan: 'Data wajib harus diisi' });
         }
-//        if (Number(harga_per_kg) <= 0 || Number(stok_kg) <= 0) {
-//            return res.status(400).json({ pesan: 'Harga dan Stok harus lebih dari 0' });
-//        }
+        if (Number(harga_per_kg) <= 0 || Number(stok_kg) <= 0) {
+            return res.status(400).json({ pesan: 'Harga dan Stok harus lebih dari 0' });
+        }
 
         const imageUrl = req.file ? req.file.path : null;
 
