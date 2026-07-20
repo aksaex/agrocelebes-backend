@@ -3,7 +3,8 @@ const router = express.Router();
 
 router.get('/', async (req, res) => {
   try {
-    const adm4 = req.query.adm4 || '73.71.11.1001'; 
+    // UBAH DISINI: Default sekarang adalah Barru (73.11.04.1001)
+    const adm4 = req.query.adm4 || '73.11.04.1001'; 
     
     console.log(`Mengambil cuaca untuk kode wilayah: ${adm4}`);
     const bmkgUrl = `https://api.bmkg.go.id/publik/prakiraan-cuaca?adm4=${adm4}`;
@@ -15,40 +16,26 @@ router.get('/', async (req, res) => {
         }
     });
     
+    // Jika BMKG merespons dengan status error (seperti 404 atau 500)
     if (!response.ok) {
-      throw new Error(`Server BMKG menolak akses: ${response.status}`);
+      return res.status(response.status).json({
+        success: false,
+        message: `Murni gagal mendapatkan data dari server BMKG. Status: ${response.status}. Kode wilayah '${adm4}' tidak ditemukan atau format API BMKG berubah.`
+      });
     }
     
+    // Kirimkan seluruh struktur data asli multi-hari (Array penuh) dari BMKG ke frontend
     const data = await response.json();
-    res.json(data);
+    return res.json(data);
 
   } catch (error) {
-    console.error('Peringatan BMKG (Gunakan Fallback):', error.message);
+    console.error('Koneksi ke BMKG Terputus:', error.message);
     
-    // SISTEM SATELIT CADANGAN (ANTI-BADAI & ANTI-CRASH)
-    // Cek apakah request-nya meminta daerah Parepare (Kode 73.72)
-    const isParepare = req.query.adm4 && req.query.adm4.startsWith('73.72');
-
-    res.json({
-      lokasi: {
-        kecamatan: isParepare ? "Bacukiki (Mode Satelit Cadangan)" : "Makassar (Mode Satelit Cadangan)",
-        kotkab: isParepare ? "Kota Parepare" : "Kota Makassar",
-        provinsi: "Sulawesi Selatan"
-      },
-      data: [
-        {
-          cuaca: [
-            [
-              {
-                t: isParepare ? 26 : 32, // Jika Parepare 26°C (sesuai data Anda), jika bukan 32°C
-                hu: isParepare ? 89 : 75, // Kelembapan
-                ws: isParepare ? 10 : 15, // Kecepatan angin
-                weather_desc: isParepare ? "Hujan Ringan" : "Cerah Berawan" 
-              }
-            ]
-          ]
-        }
-      ]
+    // Kirimkan error nyata, hentikan manipulasi data cadangan!
+    return res.status(502).json({
+      success: false,
+      message: 'Gagal terhubung ke upstream server BMKG (Bad Gateway).',
+      error: error.message
     });
   }
 });

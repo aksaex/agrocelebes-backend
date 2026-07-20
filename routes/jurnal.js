@@ -1,7 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const Jurnal = require('../models/Jurnal');
+const User = require('../models/User');
 const { verifikasiToken: auth } = require('../middleware/authMiddleware');
+const { hitungAgroScore } = require('../utils/agroScore');
 // 1. AMBIL SEMUA DATA JURNAL MILIK PETANI YANG LOGIN
 router.get('/', auth, async (req, res) => {
     try {
@@ -43,6 +45,36 @@ router.delete('/:id', auth, async (req, res) => {
         res.json({ pesan: 'Catatan berhasil dihapus' });
     } catch (error) {
         res.status(500).json({ pesan: 'Gagal menghapus catatan' });
+    }
+});
+
+router.get('/agro-score/me', auth, async (req, res) => {
+    try {
+        const user = await User.findById(req.user.id).select('profil_lahan');
+        if (!user) {
+            return res.status(404).json({ pesan: 'Data pengguna tidak ditemukan.' });
+        }
+
+        const totalJurnal = await Jurnal.countDocuments({ petani_id: req.user.id });
+        const jurnalSelesai = await Jurnal.countDocuments({ petani_id: req.user.id, status_selesai: true });
+        const rasioJurnal = totalJurnal > 0 ? jurnalSelesai / totalJurnal : 0.3;
+
+        const agroScore = hitungAgroScore({
+            luasLahanHa: user.profil_lahan?.luas_lahan_ha || 0,
+            cuacaScore: user.profil_lahan?.cuaca_score || 1,
+            riwayatJurnalScore: rasioJurnal
+        });
+
+        res.json({
+            agroScore,
+            faktor: {
+                luasLahanHa: user.profil_lahan?.luas_lahan_ha || 0,
+                cuacaScore: user.profil_lahan?.cuaca_score || 1,
+                riwayatJurnalScore: rasioJurnal
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ pesan: 'Gagal menghitung AgroScore', error: error.message });
     }
 });
 

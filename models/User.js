@@ -1,31 +1,45 @@
 const mongoose = require('mongoose');
 
 const userSchema = new mongoose.Schema({
-  // --- DATA DASAR ---
-  nama: { type: String, required: true },
-  email: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
-  role: { type: String, enum: ['petani', 'pembeli', 'admin'], required: true }, // Ditambah role 'admin'
-  no_hp: {
+  nama: {
     type: String,
     required: true,
-    unique: true // <--- TAMBAHKAN INI AGAR TIDAK ADA NOMOR KEMBAR
   },
-  alamat: { type: String },
-  
-  // --- FITUR PROFESIONAL BARU ---
-  nama_perusahaan: { type: String }, // Khusus untuk pembeli B2B
-  
-  koordinat_lokasi: {                // Untuk fitur anti-penipuan (Geolocation) saat daftar
-    lat: { type: Number },
-    lng: { type: Number }
+  email: {
+    type: String,
+    required: true,
+    unique: true,
   },
-  
-  isVerified: { type: Boolean, default: false }, // Mencegah akun bot/spam (Verifikasi Email)
-  
-  resetPasswordToken: { type: String },          // Token unik untuk fitur Lupa Password
-  resetPasswordExpire: { type: Date }            // Batas waktu kadaluarsa token reset sandi (misal: 10 menit)
-  
+  password: {
+    type: String,
+    required: true,
+  },
+  role: {
+    type: String,
+    enum: ['petani', 'kud', 'pabrik', 'kios', 'admin'], // Sesuaikan dengan role Anda
+    required: true,
+  },
+  no_hp: {
+    type: String,
+    default: null,
+  },
+  alamat: {
+    type: String,
+    default: 'Belum diatur',
+  },
+  nama_perusahaan: {
+    type: String,
+    default: '',
+  },
+  koordinat_lokasi: {
+    lat: { type: Number, default: null },
+    lng: { type: Number, default: null }
+  },
+  profil_lahan: {
+    status_lahan: { type: String, default: 'belum diverifikasi' },
+    luas_lahan_ha: { type: Number, default: 0 }
+  }
 }, { timestamps: true });
 
-module.exports = mongoose.model('User', userSchema);
+// PEMBERSIHAN EKSPOR: Cek registry Mongoose terlebih dahulu untuk mencegah overwrite/circular dependency
+module.exports = mongoose.models.User || mongoose.model('User', userSchema);

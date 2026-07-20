@@ -3,18 +3,27 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 require('dotenv').config();
+const validateEnvironment = require('./utils/validateEnv');
 
 // --- IMPORT SECURITY LIBRARY ---
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 
 const app = express();
+validateEnvironment();
+
+// =========================================================================
+// 🌟 INITIALIZE MONGOOSE MODELS REGISTRY (PENCEGAH CIRCULAR DEPENDENCY BUG)
+// =========================================================================
+// Memaksa Node.js memuat skema ke memori global Mongoose saat aplikasi dinyalakan.
+// Ini adalah solusi mutlak untuk memperbaiki error "User.findOne is not a function".
+require('./models/User');
+require('./models/Escrow');
 
 // --- WAJIB UNTUK VERCEL: Agar rate limiter membaca IP asli user ---
 app.set('trust proxy', 1); 
 
 // --- PASANG PERISAI KEAMANAN ---
-///app.use(helmet()); 
 app.use(helmet({
   crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" }
 }));
@@ -29,8 +38,6 @@ const allowedOrigins = [
 
 app.use(cors({
     origin: function (origin, callback) {
-        // !origin memungkinkan request dari browser yang tidak mengirim origin (misal: Postman/Curl)
-        // Jika ingin super ketat, hapus !origin
         if (!origin || allowedOrigins.includes(origin)) {
             callback(null, true);
         } else {
@@ -38,11 +45,9 @@ app.use(cors({
             callback(new Error('Akses diblokir oleh CORS Policy'));
         }
     },
-    credentials: true, // WAJIB untuk mengirim Cookie (HttpOnly)
+    credentials: true, 
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'] 
-    // Catatan: 'Cookie' tidak perlu dimasukkan di allowedHeaders secara manual, 
-    // karena browser yang mengelola cookie secara otomatis via credentials: true
 }));
 
 app.use(express.json());
@@ -57,7 +62,6 @@ const limiter = rateLimit({
 app.use('/api', limiter);
 
 // --- KONEKSI MONGODB (Optimasi Serverless) ---
-// Kita simpan status koneksi agar tidak melakukan koneksi ulang setiap kali fungsi dipanggil
 let isConnected = false;
 
 const connectDB = async () => {
@@ -74,11 +78,9 @@ const connectDB = async () => {
         console.log('✅ MongoDB Berhasil Terhubung');
     } catch (err) {
         console.error('❌ Gagal terhubung ke MongoDB:', err.message);
-        // Jangan hentikan proses jika di serverless, biar request lain bisa mencoba lagi
     }
 };
 
-// Panggil koneksi sebelum route
 app.use(async (req, res, next) => {
     await connectDB();
     next();
@@ -86,11 +88,17 @@ app.use(async (req, res, next) => {
 
 // --- ROUTES ---
 app.use('/api/auth', require('./routes/auth'));
-app.use('/api/products', require('./routes/product'));
+app.use('/api/user', require('./routes/user')); // 👈 Resmi Aktif: Mengatasi kegagalan sinkronisasi profil/geotag
+
+// PERBAIKAN: Baris di bawah ini dinonaktifkan sementara agar server tidak crash.
+// Buka kembali komentarnya (hapus //) JIKA file routes/product.js sudah kamu buat.
+// app.use('/api/products', require('./routes/product'));
+
 app.use('/api/chat', require('./routes/chatbot'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/weather', require('./routes/weather'));
 app.use('/api/jurnal', require('./routes/jurnal'));
+app.use('/api/escrow', require('./routes/escrow'));
 
 // --- HANDLING UNTUK LOCAL DEVELOPMENT ---
 if (process.env.NODE_ENV !== 'production') {

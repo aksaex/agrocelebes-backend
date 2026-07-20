@@ -1,9 +1,11 @@
 const express = require('express');
 const bcrypt = require('bcryptjs'); 
 const jwt = require('jsonwebtoken');
-const User = require('../models/User'); 
+const mongoose = require('mongoose');
+const User = mongoose.models.User || require('../models/User'); 
 const { verifikasiToken } = require('../middleware/authMiddleware');
 const sendEmail = require('../utils/sendEmail'); 
+const { normalizeRole, isValidRole } = require('../utils/roles');
 
 // --- 1. IMPORT RATE LIMITER ---
 const rateLimit = require('express-rate-limit'); 
@@ -12,6 +14,14 @@ const router = express.Router();
 
 // Cek apakah server berjalan di Vercel (Production) atau Localhost (Development)
 const isProduction = process.env.NODE_ENV === 'production';
+const cookieOptions = {
+  httpOnly: true,
+  // Jangan paksa secure=true saat localhost (http) karena cookie tidak akan tersimpan/terkirim.
+  secure: isProduction && (process.env.COOKIE_SECURE === 'true'),
+  // sameSite=none butuh secure; karena itu untuk localhost kita set lax.
+  sameSite: isProduction ? (process.env.COOKIE_SECURE === 'true' ? 'none' : 'lax') : 'lax',
+  path: '/'
+};
 
 // --- KEAMANAN TINGKAT DEPAN (FAIL-SAFE) ---
 if (!process.env.JWT_SECRET) {
@@ -50,7 +60,12 @@ const registerLimiter = rateLimit({
 // =========================================================================
 router.post('/register', registerLimiter, async (req, res) => {
   try {
-    const { nama, email, password, role, no_hp, alamat, nama_perusahaan, koordinat_lokasi } = req.body;
+    const { nama, email, password, role, no_hp, alamat, nama_perusahaan, koordinat_lokasi, profil_lahan } = req.body;
+    const normalizedRole = normalizeRole(role);
+
+    if (!isValidRole(normalizedRole) || normalizedRole === 'admin') {
+      return res.status(400).json({ pesan: 'Role tidak valid untuk registrasi publik.' });
+    }
 
     // VALIDASI EMAIL SEDERHANA TAPI KETAT
     const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
@@ -104,7 +119,15 @@ router.post('/register', registerLimiter, async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, salt);
 
     const newUser = new User({
-      nama, email, password: hashedPassword, role, no_hp, alamat, nama_perusahaan, koordinat_lokasi
+      nama,
+      email,
+      password: hashedPassword,
+      role: normalizedRole,
+      no_hp,
+      alamat,
+      nama_perusahaan: normalizedRole === 'petani' ? '' : nama_perusahaan,
+      koordinat_lokasi,
+      profil_lahan
     });
 
     await newUser.save();
@@ -139,16 +162,10 @@ router.post('/login', loginLimiter, async (req, res) => {
     );
 
     // 👇 REVISI COOKIE CERDAS UNTUK LOCALHOST & VERCEL
-    res.cookie('token', token, {
-        httpOnly: true, 
-        secure: isProduction, // Hanya true jika di Vercel (HTTPS)
-        sameSite: isProduction ? 'none' : 'lax', // 'none' di Vercel, 'lax' di Localhost
-        maxAge: 24 * 60 * 60 * 1000 
-    });
+    res.cookie('token', token, { ...cookieOptions, maxAge: 24 * 60 * 60 * 1000 });
 
     res.json({
       pesan: 'Login berhasil!',
-      token: token, // MEMASTIKAN FRONTEND MENDAPATKAN TOKEN
       user: {
         id: user._id, nama: user.nama, email: user.email, role: user.role, 
         no_hp: user.no_hp, alamat: user.alamat, nama_perusahaan: user.nama_perusahaan 
@@ -160,11 +177,28 @@ router.post('/login', loginLimiter, async (req, res) => {
 });
 
 // =========================================================================
+// 2B. SESSION CHECK (Untuk bootstrap frontend setelah refresh)
+// =========================================================================
+router.get('/me', verifikasiToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select('-password');
+
+    if (!user) {
+      return res.status(404).json({ pesan: 'Sesi tidak ditemukan.' });
+    }
+
+    res.json({ user });
+  } catch (error) {
+    res.status(500).json({ pesan: 'Gagal membaca sesi pengguna.', error: error.message });
+  }
+});
+
+// =========================================================================
 // 3. ENDPOINT UPDATE PROFIL (Halaman Profil Saya)
 // =========================================================================
 router.put('/profile', verifikasiToken, async (req, res) => {
   try {
-    const { nama, no_hp, alamat, nama_perusahaan, koordinat_lokasi } = req.body;
+    const { nama, no_hp, alamat, nama_perusahaan, koordinat_lokasi, profil_lahan } = req.body;
     
     // Validasi Regex
     const waRegex = /^(\+62|62|0)[0-9]{8,13}$/;
@@ -183,7 +217,7 @@ router.put('/profile', verifikasiToken, async (req, res) => {
 
     const updatedUser = await User.findByIdAndUpdate(
       req.user.id,
-      { nama, no_hp, alamat, nama_perusahaan, koordinat_lokasi },
+      { nama, no_hp, alamat, nama_perusahaan, koordinat_lokasi, profil_lahan },
       { returnDocument: 'after', runValidators: true } // Memastikan data terbaru kembali ke frontend
     ).select('-password');
 
@@ -204,7 +238,7 @@ router.put('/profile', verifikasiToken, async (req, res) => {
 // =========================================================================
 router.post('/google', async (req, res) => {
     try {
-        const { access_token, role, no_hp, alamat, nama_perusahaan, koordinat_lokasi } = req.body; 
+        const { access_token, role, no_hp, alamat, nama_perusahaan, koordinat_lokasi, profil_lahan } = req.body; 
 
         if (!access_token) {
             return res.status(400).json({ pesan: 'Access token tidak ditemukan dari Google' });
@@ -231,7 +265,12 @@ router.post('/google', async (req, res) => {
             });
         }
 
+        const normalizedRole = normalizeRole(role);
+
         if (!user && role) {
+            if (!isValidRole(normalizedRole) || normalizedRole === 'admin') {
+                return res.status(400).json({ pesan: 'Role tidak valid untuk akun Google baru.' });
+            }
             // 👇 SATPAM PENGECEK DUPLIKAT KHUSUS GOOGLE LOGIN (TAMBAHKAN INI)
             if (no_hp) {
                 const existingHp = await User.findOne({ no_hp: String(no_hp) });
@@ -250,11 +289,12 @@ router.post('/google', async (req, res) => {
                 nama: name,
                 email: email,
                 password: hashedPassword,
-                role, 
+                role: normalizedRole,
                 no_hp: no_hp || randomHp, // Menggunakan nomor acak unik jika tidak dikirim dari FE
                 alamat: alamat || 'Belum diatur',
-                nama_perusahaan: role === 'pembeli' ? nama_perusahaan : '',
-                koordinat_lokasi: koordinat_lokasi || null
+                nama_perusahaan: normalizedRole === 'petani' ? '' : (nama_perusahaan || ''),
+                koordinat_lokasi: koordinat_lokasi || null,
+                profil_lahan: profil_lahan || undefined
             });
             await user.save();
         }
@@ -266,16 +306,10 @@ router.post('/google', async (req, res) => {
         );
 
         // 👇 REVISI COOKIE CERDAS UNTUK GOOGLE LOGIN
-        res.cookie('token', jwtToken, {
-            httpOnly: true,
-            secure: isProduction, // Cerdas membaca env
-            sameSite: isProduction ? 'none' : 'lax', // Cerdas membaca env
-            maxAge: 7 * 24 * 60 * 60 * 1000 
-        });
+        res.cookie('token', jwtToken, { ...cookieOptions, maxAge: 7 * 24 * 60 * 60 * 1000 });
 
         res.json({
             isNewUser: false,
-            token: jwtToken, 
             user: {
                 id: user._id, 
                 nama: user.nama, 
@@ -382,9 +416,7 @@ router.put('/reset-password/:token', async (req, res) => {
 router.post('/logout', (req, res) => {
     // 👇 REVISI COOKIE CERDAS UNTUK LOGOUT
     res.clearCookie('token', {
-        httpOnly: true,
-        secure: isProduction, 
-        sameSite: isProduction ? 'none' : 'lax'
+        ...cookieOptions
     });
     res.json({ pesan: 'Berhasil logout' });
 });
