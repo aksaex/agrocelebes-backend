@@ -28,27 +28,21 @@ app.use(helmet({
   crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" }
 }));
 
-// --- KONFIGURASI CORS (Dioptimasi untuk Debugging) ---
-const allowedOrigins = [
-    'http://localhost:5173',
-    'https://agrocelebes.vercel.app',
-    'https://www.agrocelebes.web.id',
-    'https://agrocelebes.web.id'
-];
-
-app.use(cors({
-    origin: function (origin, callback) {
-        if (!origin || allowedOrigins.includes(origin)) {
-            callback(null, true);
-        } else {
-            console.error(`🚫 CORS Terblokir: ${origin}`);
-            callback(new Error('Akses diblokir oleh CORS Policy'));
-        }
-    },
-    credentials: true, 
+// --- KONFIGURASI CORS (Solusi Pasti untuk Vercel & Cookie) ---
+// Menggunakan array statis lebih aman untuk Vercel agar kredensial diizinkan
+const corsOptions = {
+    origin: [
+        'http://localhost:5173',
+        'https://agrocelebes.vercel.app',
+        'https://www.agrocelebes.web.id',
+        'https://agrocelebes.web.id'
+    ],
+    credentials: true, // WAJIB TRUE untuk menerima HttpOnly Cookie
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'] 
-}));
+    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie'] // Tambahkan Cookie di sini
+};
+
+app.use(cors(corsOptions));
 
 app.use(express.json());
 app.use(cookieParser()); 
@@ -88,7 +82,7 @@ app.use(async (req, res, next) => {
 
 // --- ROUTES ---
 app.use('/api/auth', require('./routes/auth'));
-app.use('/api/user', require('./routes/user')); // 👈 Resmi Aktif: Mengatasi kegagalan sinkronisasi profil/geotag
+app.use('/api/user', require('./routes/user')); 
 
 // PERBAIKAN: Baris di bawah ini dinonaktifkan sementara agar server tidak crash.
 // Buka kembali komentarnya (hapus //) JIKA file routes/product.js sudah kamu buat.
