@@ -13,13 +13,12 @@ const rateLimit = require('express-rate-limit');
 const router = express.Router();
 
 // Cek apakah server berjalan di Vercel (Production) atau Localhost (Development)
-const isProduction = process.env.NODE_ENV === 'production';
+// Vercel otomatis mengatur NODE_ENV menjadi 'production'
+const isVercel = process.env.NODE_ENV === 'production';
 const cookieOptions = {
   httpOnly: true,
-  // Jangan paksa secure=true saat localhost (http) karena cookie tidak akan tersimpan/terkirim.
-  secure: isProduction && (process.env.COOKIE_SECURE === 'true'),
-  // sameSite=none butuh secure; karena itu untuk localhost kita set lax.
-  sameSite: isProduction ? (process.env.COOKIE_SECURE === 'true' ? 'none' : 'lax') : 'lax',
+  secure: isVercel, // Otomatis 'true' di Vercel (karena HTTPS), 'false' di localhost
+  sameSite: isVercel ? 'none' : 'lax', // 'none' WAJIB untuk lintas-domain Vercel, 'lax' untuk localhost
   path: '/'
 };
 
