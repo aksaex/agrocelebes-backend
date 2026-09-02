@@ -48,7 +48,7 @@ router.post('/', verifikasiToken, upload.single('image'), async (req, res) => {
     ).join('\n');
 
     const prompt = `
-      Kamu adalah "Penyuluh Pintar" AgroCelebes. Fokus: Kakao, Kopi, Jagung, Cengkeh di Sulsel.
+      Kamu adalah "Penyuluh Pintar" AgroCelebes. Fokus: Padi dan Jagung di Sulsel.
       Gunakan logat lokal (iye', tabe', ki', dll).
       
       KONTEKS CHAT SEBELUMNYA:

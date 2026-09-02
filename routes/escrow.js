@@ -54,17 +54,25 @@ router.post('/ajukan-pinjaman', verifikasiToken, authorizeRoles('petani', 'admin
   }
 });
 
-// --- RUTE BAWAAN ASLI ANDA (TIDAK BERUBAH) ---
+// ==========================================
+// 🌟 RUTE AMBIL DAFTAR ESCROW (SISTEM KOLAM/ESTAFET)
+// ==========================================
 router.get('/', verifikasiToken, authorizeRoles('petani', 'kud', 'pabrik', 'kios', 'admin'), async (req, res) => {
   try {
-    const roleKeyByUserRole = {
-      petani: 'petani_id',
-      kud: 'kud_id',
-      pabrik: 'pabrik_id',
-      kios: 'kios_id'
-    };
+    let query = {};
+    
+    // Logika Kolam MVP: Aktor bisa melihat tugas yang menunggu mereka, ATAU tugas yang sudah mereka ambil
+    if (req.user.role === 'petani') {
+      query = { petani_id: req.user.id };
+    } else if (req.user.role === 'kud') {
+      query = { $or: [{ status: 'pending' }, { kud_id: req.user.id }] };
+    } else if (req.user.role === 'pabrik') {
+      query = { $or: [{ status: 'verifikasi_lahan' }, { pabrik_id: req.user.id }] };
+    } else if (req.user.role === 'kios') {
+      query = { $or: [{ status: 'dp_locked' }, { kios_id: req.user.id }] };
+    }
+    // Jika admin, biarkan query {} agar tampil semua
 
-    const query = req.user.role === 'admin' ? {} : { [roleKeyByUserRole[req.user.role]]: req.user.id };
     const data = await withUsers(Escrow.find(query).sort({ createdAt: -1 }));
     res.json(data);
   } catch (error) {
@@ -100,16 +108,23 @@ router.post('/', verifikasiToken, authorizeRoles('petani', 'admin'), async (req,
   }
 });
 
+// ==========================================
+// 🌟 RUTE ESTAFET: KUD VERIFIKASI
+// ==========================================
 router.put('/:id/verify-land', verifikasiToken, authorizeRoles('kud', 'admin'), async (req, res) => {
   try {
     const doc = await Escrow.findById(req.params.id);
     if (!doc) return res.status(404).json({ pesan: 'Data escrow tidak ditemukan' });
 
-    if (req.user.role !== 'admin' && doc.kud_id.toString() !== req.user.id) {
+    // Cek: Jika kontrak SUDAH diambil KUD lain, tolak!
+    if (req.user.role !== 'admin' && doc.kud_id && doc.kud_id.toString() !== req.user.id) {
       return res.status(403).json({ pesan: 'Akses ditolak untuk verifikasi lahan ini' });
     }
 
+    // Assign KUD yang mengeklik ke dalam kontrak ini
+    if (req.user.role === 'kud') doc.kud_id = req.user.id;
     doc.status = 'verifikasi_lahan';
+    
     await doc.save();
     res.json(doc);
   } catch (error) {
@@ -117,16 +132,23 @@ router.put('/:id/verify-land', verifikasiToken, authorizeRoles('kud', 'admin'), 
   }
 });
 
+// ==========================================
+// 🌟 RUTE ESTAFET: PABRIK SETOR DP
+// ==========================================
 router.put('/:id/pay-dp', verifikasiToken, authorizeRoles('pabrik', 'admin'), async (req, res) => {
   try {
     const doc = await Escrow.findById(req.params.id);
     if (!doc) return res.status(404).json({ pesan: 'Data escrow tidak ditemukan' });
 
-    if (req.user.role !== 'admin' && doc.pabrik_id.toString() !== req.user.id) {
+    // Cek: Jika kontrak SUDAH dibayar DP oleh Pabrik lain, tolak!
+    if (req.user.role !== 'admin' && doc.pabrik_id && doc.pabrik_id.toString() !== req.user.id) {
       return res.status(403).json({ pesan: 'Akses ditolak untuk pembayaran DP ini' });
     }
 
+    // Assign Pabrik yang mengeklik ke dalam kontrak ini
+    if (req.user.role === 'pabrik') doc.pabrik_id = req.user.id;
     doc.status = 'dp_locked';
+    
     await doc.save();
     res.json(doc);
   } catch (error) {
@@ -134,16 +156,23 @@ router.put('/:id/pay-dp', verifikasiToken, authorizeRoles('pabrik', 'admin'), as
   }
 });
 
+// ==========================================
+// 🌟 RUTE ESTAFET: KIOS SERAHKAN PUPUK
+// ==========================================
 router.put('/:id/deliver-fertilizer', verifikasiToken, authorizeRoles('kios', 'admin'), async (req, res) => {
   try {
     const doc = await Escrow.findById(req.params.id);
     if (!doc) return res.status(404).json({ pesan: 'Data escrow tidak ditemukan' });
 
-    if (req.user.role !== 'admin' && doc.kios_id.toString() !== req.user.id) {
+    // Cek: Jika pupuk SUDAH diserahkan oleh Kios lain, tolak!
+    if (req.user.role !== 'admin' && doc.kios_id && doc.kios_id.toString() !== req.user.id) {
       return res.status(403).json({ pesan: 'Akses ditolak untuk serah pupuk ini' });
     }
 
+    // Assign Kios yang mengeklik ke dalam kontrak ini
+    if (req.user.role === 'kios') doc.kios_id = req.user.id;
     doc.status = 'pupuk_diserahkan';
+    
     await doc.save();
     res.json(doc);
   } catch (error) {
