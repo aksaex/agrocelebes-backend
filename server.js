@@ -97,6 +97,9 @@ app.use('/api/escrow', require('./routes/escrow'));
 // TAHAP 2: Rute Satelit ESA Sentinel Ditambahkan di sini 👇
 app.use('/api/satellite', require('./routes/satellite'));
 
+// Rute Simulasi BPD / Bank Ditambahkan di sini 👇
+app.use('/api/bank', require('./routes/bank'));
+
 // --- HANDLING UNTUK LOCAL DEVELOPMENT ---
 if (process.env.NODE_ENV !== 'production') {
     const PORT = process.env.PORT || 5000;

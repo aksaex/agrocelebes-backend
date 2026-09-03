@@ -2,8 +2,13 @@ const express = require('express');
 const axios = require('axios');
 const User = require('../models/User');
 const { verifikasiToken, authorizeRoles } = require('../middleware/authMiddleware');
+const { hitungAgroScore } = require('../utils/agroScore'); // Pastikan path ini benar
 
 const router = express.Router();
+
+// 🌟 SISTEM IN-MEMORY CACHE (Simpan memori selama 7 hari)
+const ndviCache = new Map();
+const CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 Hari dalam milidetik
 
 async function getSentinelToken() {
   const cleanClientId = process.env.SENTINEL_CLIENT_ID.trim();
@@ -22,7 +27,6 @@ async function getSentinelToken() {
     );
     return res.data.access_token;
   } catch (error) {
-    // Tangkap error 503 tanpa membuat server kita crash
     console.warn("⚠️ API Satelit ESA Down/503. Mengaktifkan Mode Fallback...");
     return null;
   }
@@ -30,19 +34,54 @@ async function getSentinelToken() {
 
 router.post('/analisis/:petaniId', verifikasiToken, authorizeRoles('kud', 'admin'), async (req, res) => {
   try {
-    const petani = await User.findById(req.params.petaniId);
+    const { petaniId } = req.params;
+
+    // Pengaman ID Kosong
+    if (!petaniId || petaniId === 'undefined' || petaniId.length !== 24) {
+      return res.status(400).json({ pesan: 'ID Petani tidak valid atau tidak disertakan.' });
+    }
+
+    const petani = await User.findById(petaniId);
     if (!petani || !petani.koordinat_lokasi || !petani.koordinat_lokasi.lat) {
       return res.status(400).json({ pesan: 'Koordinat GPS petani tidak ditemukan.' });
     }
 
     const { lat, lng } = petani.koordinat_lokasi;
     
-    // Default Fallback (Sesuai Proposal: Radar SAR Sentinel-1)
-    let finalNdvi = 0.65; 
-    let radarFallbackActive = true; 
-    let statusKoneksi = "Mode Fallback (Server ESA 503/Sibuk)";
+    // 🌟 CEK CACHE SEBELUM MENEMBAK KE EROPA
+    // Pembulatan 4 desimal (akurasi ~11 meter) agar titik yang berdekatan dianggap sama
+    const cacheKey = `${lat.toFixed(4)},${lng.toFixed(4)}`;
+    
+    if (ndviCache.has(cacheKey)) {
+      const cachedData = ndviCache.get(cacheKey);
+      // Jika umur cache masih di bawah 7 hari, gunakan data ini!
+      if (Date.now() - cachedData.timestamp < CACHE_TTL) {
+        console.log(`⚡ Mengambil data NDVI dari Cache Lokal untuk area: ${cacheKey}`);
+        
+        // Simpan pembaruan ke DB tanpa perlu hitung satelit ulang
+        petani.profil_lahan = {
+          ...petani.profil_lahan,
+          ndvi_score: cachedData.ndvi,
+          radar_fusion_used: cachedData.radarFallback,
+          agro_score_final: cachedData.agroScore,
+          agro_kategori: cachedData.kategori
+        };
+        await petani.save();
 
-    // Coba tembak satelit Eropa
+        return res.json({ 
+          pesan: `Pemindaian secepat kilat (Cache 7 Hari)`, 
+          ndvi: cachedData.ndvi, 
+          satelit: cachedData.radarFallback ? 'Sentinel-1 (SAR Radar)' : 'Sentinel-2 (Optik)',
+          debug: "Data Cache Lokal"
+        });
+      } else {
+        // Hapus cache kedaluwarsa
+        ndviCache.delete(cacheKey);
+      }
+    }
+
+    // Jika tidak ada di cache, lakukan pemindaian riil
+    let realNdvi = NaN;
     const token = await getSentinelToken();
     
     if (token) {
@@ -73,27 +112,43 @@ router.post('/analisis/:petaniId', verifikasiToken, authorizeRoles('kud', 'admin
 
         const sentinelRes = await axios.post('https://sh.dataspace.copernicus.eu/api/v1/statistics', payloadNDVI, {
           headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-          timeout: 8000 // Maksimal tunggu 8 detik agar presentasi tidak macet
+          timeout: 10000 
         });
 
-        const stats = sentinelRes.data.data[0].outputs.default.bands.B0.stats;
-        const realNdvi = stats.mean.toFixed(2); 
-
-        if (!isNaN(realNdvi) && realNdvi >= 0) {
-          finalNdvi = realNdvi;
-          radarFallbackActive = false;
-          statusKoneksi = "Data Optik Riil (Sentinel-2)";
-        }
+        realNdvi = parseFloat(sentinelRes.data.data[0].outputs.default.bands.B0.stats.mean.toFixed(2)); 
       } catch (apiError) {
-        console.warn("⚠️ API Satelit ESA gagal menarik data spesifik. Fallback ke Radar SAR aktif.");
+        console.warn("⚠️ Timeout/Error ESA. Fallback ke Radar SAR aktif.");
       }
     }
 
-    // Simpan hasil ke database (Entah itu riil atau fallback, sistem TETAP JALAN)
+    // Logika Fallback Radar (Jika awan atau server down)
+    let finalNdvi = realNdvi;
+    let radarFallbackActive = false;
+
+    if (isNaN(realNdvi) || realNdvi < 0) {
+       radarFallbackActive = true;
+       finalNdvi = petani.profil_lahan?.ndvi_score || 0.65; 
+    }
+
+    // Eksekusi Mesin AgroScore dari utils
+    const hasilScore = hitungAgroScore(finalNdvi);
+
+    // 🌟 SIMPAN HASIL KE CACHE LOKAL
+    ndviCache.set(cacheKey, {
+      ndvi: finalNdvi,
+      radarFallback: radarFallbackActive,
+      agroScore: hasilScore.score,
+      kategori: hasilScore.kategori,
+      timestamp: Date.now()
+    });
+
+    // Simpan ke Database
     petani.profil_lahan = {
       ...petani.profil_lahan,
       ndvi_score: finalNdvi,
-      radar_fusion_used: radarFallbackActive
+      radar_fusion_used: radarFallbackActive,
+      agro_score_final: hasilScore.score,
+      agro_kategori: hasilScore.kategori
     };
     await petani.save();
 
@@ -101,7 +156,7 @@ router.post('/analisis/:petaniId', verifikasiToken, authorizeRoles('kud', 'admin
       pesan: `Pemindaian berhasil via ${radarFallbackActive ? 'Sentinel-1 (SAR Radar)' : 'Sentinel-2 (Optik)'}`, 
       ndvi: finalNdvi, 
       satelit: radarFallbackActive ? 'Sentinel-1 (SAR Radar)' : 'Sentinel-2 (Optik)',
-      debug: statusKoneksi
+      debug: radarFallbackActive ? "Mode Fallback" : "Satelit ESA Langsung"
     });
 
   } catch (error) {

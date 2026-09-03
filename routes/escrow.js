@@ -1,6 +1,9 @@
 const express = require('express');
+const crypto = require('crypto');
 const Escrow = require('../models/Escrow');
-const User = require('../models/User'); // <--- PENTING: Import model User untuk verifikasi lahan
+const User = require('../models/User');
+const Lelang = require('../models/Lelang');
+const AuditLog = require('../models/AuditLog');
 const { verifikasiToken, authorizeRoles } = require('../middleware/authMiddleware');
 
 const router = express.Router();
@@ -12,71 +15,115 @@ const withUsers = (query) => query
   .populate('kios_id', 'nama role nama_perusahaan');
 
 // ==========================================
-// 🌟 RUTE BARU: AMBIL KONTRAK AKTIF PETANI (ANTI-HILANG REFRESH)
+// 🛡️ FUNGSI HELPER: IMMUTABLE AUDIT TRAIL
+// ==========================================
+const catatAudit = async (aktorId, aksi, namaDokumen, idDokumen, oldData, newData) => {
+  try {
+    // 1. Bangun string data untuk di-hash
+    const dataString = `${aktorId}-${aksi}-${idDokumen}-${JSON.stringify(newData)}-${Date.now()}`;
+    
+    // 2. Hasilkan SHA-256 secara manual di sini
+    const signature = crypto.createHash('sha256').update(dataString).digest('hex');
+
+    // 3. Simpan ke database beserta signature-nya
+    await AuditLog.create({
+      aktor_id: aktorId,
+      aksi: aksi,
+      dokumen_terkait: namaDokumen,
+      id_dokumen: idDokumen,
+      data_sebelum: oldData || {},
+      data_sesudah: newData || {},
+      signature_sha256: signature
+    });
+  } catch (err) {
+    console.error('Gagal mencatat audit trail (SHA-256):', err.message);
+  }
+};
+
+// ==========================================
+// 🌟 RUTE: AMBIL KONTRAK AKTIF PETANI
 // ==========================================
 router.get('/petani-aktif', verifikasiToken, authorizeRoles('petani', 'admin'), async (req, res) => {
   try {
     const kontrak = await Escrow.findOne({ petani_id: req.user.id }).sort({ createdAt: -1 });
     res.json(kontrak);
   } catch (error) {
-    res.status(500).json({ pesan: 'Gagal mengambil kontrak escrow petani', error: error.message });
+    res.status(500).json({ pesan: 'Gagal mengambil kontrak', error: error.message });
   }
 });
 
 // ==========================================
-// 🌟 RUTE BARU: AJUKAN PINJAMAN BERDASARKAN LUAS LAHAN PROPOSAL
+// 🌟 RUTE: AJUKAN PINJAMAN & AUTO-AGREGASI LELANG
 // ==========================================
 router.post('/ajukan-pinjaman', verifikasiToken, authorizeRoles('petani', 'admin'), async (req, res) => {
   try {
     const petani = await User.findById(req.user.id);
-
-    //if (!petani || petani.profil_lahan.status_lahan !== 'terverifikasi') {
-      //return res.status(403).json({ pesan: 'Akses ditolak. Lahan Anda belum lolos sertifikasi satelit KUD!' });
-    //}
-
-    const luas = petani.profil_lahan.luas_lahan_ha || 1;
-    const targetTonase = luas * 5; // Estimasi proposal: 5 Ton per Hektar
-    const hargaPerTon = 7200000;  // Rp 7.200.000 per Ton Gabah Premium
+    const luas = petani.profil_lahan?.luas_lahan_ha || 1;
+    const targetTonase = luas * 5; 
+    const hargaPerTon = 7200000;  
     const totalNilaiKontrak = targetTonase * hargaPerTon;
 
+    // 1. Buat Kontrak Escrow Petani
     const kontrakBaru = await Escrow.create({
       petani_id: req.user.id,
       komoditas: 'Gabah Premium Demo',
       tonase: targetTonase,
       nilai_kontrak: totalNilaiKontrak,
       status: 'pending',
-      catatan: `Kontrak otomatis diajukan untuk lahan seluas ${luas} Ha.`
+      catatan: `Kontrak diajukan untuk lahan ${luas} Ha.`
     });
 
-    res.status(201).json(kontrakBaru);
+    // 2. 🤖 MESIN MATCHMAKING: AUTO-AGREGASI LELANG B2B
+    const defaultKud = await User.findOne({ role: 'kud' }); 
+    
+    let lelangAktif = await Lelang.findOne({ status: 'open', komoditas: 'Gabah Premium Demo' });
+    
+    if (!lelangAktif && defaultKud) {
+      lelangAktif = await Lelang.create({
+        kud_id: defaultKud._id,
+        komoditas: 'Gabah Premium Demo',
+        tonase_target: 30, // Kuota minimum industri
+        tonase_terkumpul: targetTonase,
+        petani_tergabung: [req.user.id]
+      });
+    } else if (lelangAktif) {
+      lelangAktif.tonase_terkumpul += targetTonase;
+      if (!lelangAktif.petani_tergabung.includes(req.user.id)) {
+        lelangAktif.petani_tergabung.push(req.user.id);
+      }
+      if (lelangAktif.tonase_terkumpul >= lelangAktif.tonase_target) {
+        lelangAktif.status = 'closed'; // Siap di-bid oleh Pabrik
+      }
+      await lelangAktif.save();
+    }
+
+    // 3. Catat Audit Log Anti-Manipulasi
+    await catatAudit(req.user.id, 'AJUKAN_PINJAMAN_DAN_AGREGASI', 'Escrow', kontrakBaru._id, null, kontrakBaru.toObject());
+
+    res.status(201).json({ 
+      kontrak: kontrakBaru, 
+      lelang_info: lelangAktif ? `Tergabung dalam lelang. Terkumpul: ${lelangAktif.tonase_terkumpul}/${lelangAktif.tonase_target} Ton` : '' 
+    });
   } catch (error) {
-    res.status(500).json({ pesan: 'Gagal memproses pengajuan pinjaman awal', error: error.message });
+    res.status(500).json({ pesan: 'Gagal memproses pengajuan', error: error.message });
   }
 });
 
 // ==========================================
-// 🌟 RUTE AMBIL DAFTAR ESCROW (SISTEM KOLAM/ESTAFET)
+// 🌟 RUTE: AMBIL DAFTAR ESCROW
 // ==========================================
 router.get('/', verifikasiToken, authorizeRoles('petani', 'kud', 'pabrik', 'kios', 'admin'), async (req, res) => {
   try {
     let query = {};
-    
-    // Logika Kolam MVP: Aktor bisa melihat tugas yang menunggu mereka, ATAU tugas yang sudah mereka ambil
-    if (req.user.role === 'petani') {
-      query = { petani_id: req.user.id };
-    } else if (req.user.role === 'kud') {
-      query = { $or: [{ status: 'pending' }, { kud_id: req.user.id }] };
-    } else if (req.user.role === 'pabrik') {
-      query = { $or: [{ status: 'verifikasi_lahan' }, { pabrik_id: req.user.id }] };
-    } else if (req.user.role === 'kios') {
-      query = { $or: [{ status: 'dp_locked' }, { kios_id: req.user.id }] };
-    }
-    // Jika admin, biarkan query {} agar tampil semua
+    if (req.user.role === 'petani') query = { petani_id: req.user.id };
+    else if (req.user.role === 'kud') query = { $or: [{ status: 'pending' }, { kud_id: req.user.id }] };
+    else if (req.user.role === 'pabrik') query = { $or: [{ status: 'verifikasi_lahan' }, { pabrik_id: req.user.id }] };
+    else if (req.user.role === 'kios') query = { $or: [{ status: 'dp_locked' }, { kios_id: req.user.id }] };
 
     const data = await withUsers(Escrow.find(query).sort({ createdAt: -1 }));
     res.json(data);
   } catch (error) {
-    res.status(500).json({ pesan: 'Gagal mengambil data escrow', error: error.message });
+    res.status(500).json({ pesan: 'Gagal mengambil data', error: error.message });
   }
 });
 
@@ -88,44 +135,36 @@ router.get('/agregasi/tonase', verifikasiToken, authorizeRoles('kud', 'pabrik', 
       acc[key] = (acc[key] || 0) + item.tonase;
       return acc;
     }, {});
-
     res.json(totalPerKomoditas);
   } catch (error) {
-    res.status(500).json({ pesan: 'Gagal menghitung agregasi tonase', error: error.message });
-  }
-});
-
-router.post('/', verifikasiToken, authorizeRoles('petani', 'admin'), async (req, res) => {
-  try {
-    const payload = {
-      ...req.body,
-      petani_id: req.user.role === 'admin' && req.body.petani_id ? req.body.petani_id : req.user.id
-    };
-    const doc = await Escrow.create(payload);
-    res.status(201).json(doc);
-  } catch (error) {
-    res.status(400).json({ pesan: 'Gagal membuat transaksi escrow', error: error.message });
+    res.status(500).json({ pesan: 'Gagal menghitung agregasi', error: error.message });
   }
 });
 
 // ==========================================
-// 🌟 RUTE ESTAFET: KUD VERIFIKASI
+// 🌟 RUTE ESTAFET: KUD VERIFIKASI + BPD SIMULASI
 // ==========================================
 router.put('/:id/verify-land', verifikasiToken, authorizeRoles('kud', 'admin'), async (req, res) => {
   try {
     const doc = await Escrow.findById(req.params.id);
-    if (!doc) return res.status(404).json({ pesan: 'Data escrow tidak ditemukan' });
+    if (!doc) return res.status(404).json({ pesan: 'Data tidak ditemukan' });
 
-    // Cek: Jika kontrak SUDAH diambil KUD lain, tolak!
-    if (req.user.role !== 'admin' && doc.kud_id && doc.kud_id.toString() !== req.user.id) {
-      return res.status(403).json({ pesan: 'Akses ditolak untuk verifikasi lahan ini' });
-    }
-
-    // Assign KUD yang mengeklik ke dalam kontrak ini
+    const oldData = doc.toObject();
     if (req.user.role === 'kud') doc.kud_id = req.user.id;
+    
+    // Status bergerak maju
     doc.status = 'verifikasi_lahan';
     
+    // 🏦 TRIGGER SIMULASI BPD: Generate Virtual Account Otomatis
+    // Menggunakan prefix 8888 (Simulasi BPD Sulselbar)
+    doc.virtual_account = `8888${Math.floor(10000000 + Math.random() * 90000000)}`;
+    doc.catatan = `Lahan diverifikasi. Menunggu DP Pabrik via VA BPD: ${doc.virtual_account}`;
+    
     await doc.save();
+    
+    // Kunci aksi dengan SHA-256
+    await catatAudit(req.user.id, 'VERIFIKASI_LAHAN_&_CREATE_VA', 'Escrow', doc._id, oldData, doc.toObject());
+    
     res.json(doc);
   } catch (error) {
     res.status(500).json({ pesan: 'Gagal verifikasi lahan', error: error.message });
@@ -133,23 +172,21 @@ router.put('/:id/verify-land', verifikasiToken, authorizeRoles('kud', 'admin'), 
 });
 
 // ==========================================
-// 🌟 RUTE ESTAFET: PABRIK SETOR DP
+// 🌟 RUTE ESTAFET: PABRIK SETOR DP + LOGGING
 // ==========================================
 router.put('/:id/pay-dp', verifikasiToken, authorizeRoles('pabrik', 'admin'), async (req, res) => {
   try {
     const doc = await Escrow.findById(req.params.id);
-    if (!doc) return res.status(404).json({ pesan: 'Data escrow tidak ditemukan' });
+    if (!doc) return res.status(404).json({ pesan: 'Data tidak ditemukan' });
 
-    // Cek: Jika kontrak SUDAH dibayar DP oleh Pabrik lain, tolak!
-    if (req.user.role !== 'admin' && doc.pabrik_id && doc.pabrik_id.toString() !== req.user.id) {
-      return res.status(403).json({ pesan: 'Akses ditolak untuk pembayaran DP ini' });
-    }
-
-    // Assign Pabrik yang mengeklik ke dalam kontrak ini
+    const oldData = doc.toObject();
     if (req.user.role === 'pabrik') doc.pabrik_id = req.user.id;
     doc.status = 'dp_locked';
     
     await doc.save();
+    
+    await catatAudit(req.user.id, 'PABRIK_SETOR_DP', 'Escrow', doc._id, oldData, doc.toObject());
+    
     res.json(doc);
   } catch (error) {
     res.status(500).json({ pesan: 'Gagal memproses DP', error: error.message });
@@ -162,35 +199,37 @@ router.put('/:id/pay-dp', verifikasiToken, authorizeRoles('pabrik', 'admin'), as
 router.put('/:id/deliver-fertilizer', verifikasiToken, authorizeRoles('kios', 'admin'), async (req, res) => {
   try {
     const doc = await Escrow.findById(req.params.id);
-    if (!doc) return res.status(404).json({ pesan: 'Data escrow tidak ditemukan' });
+    if (!doc) return res.status(404).json({ pesan: 'Data tidak ditemukan' });
 
-    // Cek: Jika pupuk SUDAH diserahkan oleh Kios lain, tolak!
-    if (req.user.role !== 'admin' && doc.kios_id && doc.kios_id.toString() !== req.user.id) {
-      return res.status(403).json({ pesan: 'Akses ditolak untuk serah pupuk ini' });
-    }
-
-    // Assign Kios yang mengeklik ke dalam kontrak ini
+    const oldData = doc.toObject();
     if (req.user.role === 'kios') doc.kios_id = req.user.id;
     doc.status = 'pupuk_diserahkan';
     
     await doc.save();
+    
+    await catatAudit(req.user.id, 'KIOS_SERAHKAN_PUPUK', 'Escrow', doc._id, oldData, doc.toObject());
+    
     res.json(doc);
   } catch (error) {
-    res.status(500).json({ pesan: 'Gagal memperbarui status penyerahan pupuk', error: error.message });
+    res.status(500).json({ pesan: 'Gagal serah pupuk', error: error.message });
   }
 });
 
+// ==========================================
+// 🌟 RUTE PENUTUPAN KONTRAK
+// ==========================================
 router.put('/:id/complete', verifikasiToken, authorizeRoles('petani', 'admin'), async (req, res) => {
   try {
     const doc = await Escrow.findById(req.params.id);
-    if (!doc) return res.status(404).json({ pesan: 'Data escrow tidak ditemukan' });
+    if (!doc) return res.status(404).json({ pesan: 'Data tidak ditemukan' });
 
-    if (req.user.role !== 'admin' && doc.petani_id.toString() !== req.user.id) {
-      return res.status(403).json({ pesan: 'Akses ditolak untuk menutup kontrak ini' });
-    }
-
+    const oldData = doc.toObject();
     doc.status = 'selesai';
+    
     await doc.save();
+    
+    await catatAudit(req.user.id, 'KONTRAK_SELESAI', 'Escrow', doc._id, oldData, doc.toObject());
+    
     res.json(doc);
   } catch (error) {
     res.status(500).json({ pesan: 'Gagal menutup kontrak', error: error.message });
