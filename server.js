@@ -16,9 +16,10 @@ validateEnvironment();
 // 🌟 INITIALIZE MONGOOSE MODELS REGISTRY (PENCEGAH CIRCULAR DEPENDENCY BUG)
 // =========================================================================
 // Memaksa Node.js memuat skema ke memori global Mongoose saat aplikasi dinyalakan.
-// Ini adalah solusi mutlak untuk memperbaiki error "User.findOne is not a function".
 require('./models/User');
 require('./models/Escrow');
+require('./models/Lelang'); // Ditambahkan untuk inisialisasi model lelang
+require('./models/AuditLog'); // Ditambahkan untuk inisialisasi model audit
 
 // --- WAJIB UNTUK VERCEL: Agar rate limiter membaca IP asli user ---
 app.set('trust proxy', 1); 
@@ -29,7 +30,6 @@ app.use(helmet({
 }));
 
 // --- KONFIGURASI CORS (Solusi Pasti untuk Vercel & Cookie) ---
-// Menggunakan array statis lebih aman untuk Vercel agar kredensial diizinkan
 const corsOptions = {
     origin: [
         'http://localhost:5173',
@@ -39,7 +39,7 @@ const corsOptions = {
     ],
     credentials: true, // WAJIB TRUE untuk menerima HttpOnly Cookie
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie'] // Tambahkan Cookie di sini
+    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie']
 };
 
 app.use(cors(corsOptions));
@@ -83,22 +83,16 @@ app.use(async (req, res, next) => {
 // --- ROUTES ---
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/user', require('./routes/user')); 
-
-// PERBAIKAN: Baris di bawah ini dinonaktifkan sementara agar server tidak crash.
-// Buka kembali komentarnya (hapus //) JIKA file routes/product.js sudah kamu buat.
-// app.use('/api/products', require('./routes/product'));
-
 app.use('/api/chat', require('./routes/chatbot'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/weather', require('./routes/weather'));
 app.use('/api/jurnal', require('./routes/jurnal'));
 app.use('/api/escrow', require('./routes/escrow'));
-
-// TAHAP 2: Rute Satelit ESA Sentinel Ditambahkan di sini 👇
 app.use('/api/satellite', require('./routes/satellite'));
-
-// Rute Simulasi BPD / Bank Ditambahkan di sini 👇
 app.use('/api/bank', require('./routes/bank'));
+
+// 🌟 RUTE BARU: BURSA LELANG B2B PABRIK
+app.use('/api/lelang', require('./routes/lelang'));
 
 // --- HANDLING UNTUK LOCAL DEVELOPMENT ---
 if (process.env.NODE_ENV !== 'production') {
