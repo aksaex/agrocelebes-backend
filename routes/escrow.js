@@ -30,9 +30,9 @@ router.post('/ajukan-pinjaman', verifikasiToken, authorizeRoles('petani', 'admin
   try {
     const petani = await User.findById(req.user.id);
 
-    if (!petani || petani.profil_lahan.status_lahan !== 'terverifikasi') {
-      return res.status(403).json({ pesan: 'Akses ditolak. Lahan Anda belum lolos sertifikasi satelit KUD!' });
-    }
+    //if (!petani || petani.profil_lahan.status_lahan !== 'terverifikasi') {
+      //return res.status(403).json({ pesan: 'Akses ditolak. Lahan Anda belum lolos sertifikasi satelit KUD!' });
+    //}
 
     const luas = petani.profil_lahan.luas_lahan_ha || 1;
     const targetTonase = luas * 5; // Estimasi proposal: 5 Ton per Hektar

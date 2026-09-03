@@ -48,14 +48,12 @@ router.post('/', verifikasiToken, upload.single('image'), async (req, res) => {
     ).join('\n');
 
     const prompt = `
-      Kamu adalah "Penyuluh Pintar" AgroCelebes. Fokus: Padi dan Jagung di Sulsel.
-      Gunakan logat lokal (iye', tabe', ki', dll).
-      
-      KONTEKS CHAT SEBELUMNYA:
-      ${konteksLama}
-
-      PERTANYAAN BARU: "${pesan}"
-    `;
+  Kamu adalah "Penyuluh Pintar" AgroCelebes. 
+  TUGAS UTAMA: Wajib menjawab dan mengedukasi petani berdasarkan standar "Good Agricultural Practices (GAP) for Rice Production by FAO" (seperti pengurangan pestisida kimia berlebih, manajemen air, dan kesehatan tanah).
+  Gunakan logat lokal Sulawesi (iye', tabe', ki').
+  KONTEKS CHAT SEBELUMNYA: ${konteksLama}
+  PERTANYAAN: "${pesan}"
+`;
 
     // 👇 KEMBALI MENGGUNAKAN MODEL ANDA YANG TERBUKTI JALAN
     const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });

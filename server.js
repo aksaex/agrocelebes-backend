@@ -94,6 +94,9 @@ app.use('/api/weather', require('./routes/weather'));
 app.use('/api/jurnal', require('./routes/jurnal'));
 app.use('/api/escrow', require('./routes/escrow'));
 
+// TAHAP 2: Rute Satelit ESA Sentinel Ditambahkan di sini 👇
+app.use('/api/satellite', require('./routes/satellite'));
+
 // --- HANDLING UNTUK LOCAL DEVELOPMENT ---
 if (process.env.NODE_ENV !== 'production') {
     const PORT = process.env.PORT || 5000;
