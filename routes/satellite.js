@@ -1,289 +1,241 @@
+// routes/satellite.js
 const express = require('express');
-const axios = require('axios');
-const xml2js = require('xml2js');
+const xml2js = require('xml2js'); 
+const axios = require('axios');   
 const User = require('../models/User');
 const { verifikasiToken, authorizeRoles } = require('../middleware/authMiddleware');
 const { hitungAgroScore } = require('../utils/agroScore');
 
+// IMPORT UTILITAS GEE & CLOUDINARY
+const { hitungNdviSatelit } = require('../utils/geeNdvi');
+const { labelLandCover } = require('../utils/geeLandCover');
+const { cloudinary } = require('../config/cloudinary'); // Pastikan path ini sesuai dengan file konfigurasi Anda
+
 const router = express.Router();
 
-// 🌟 SISTEM IN-MEMORY CACHE (Simpan memori selama 7 hari)
+// Cache
 const ndviCache = new Map();
 const CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
 
-// Fungsi untuk mendapatkan token akses satelit Enterprise (Sentinel Hub / Planet Labs)
-async function getSentinelToken() {
-  const cleanClientId = process.env.SENTINEL_CLIENT_ID?.trim();
-  const cleanClientSecret = process.env.SENTINEL_CLIENT_SECRET?.trim();
-
-  // 1. Deteksi Dini Kredensial Kosong
-  if (!cleanClientId || !cleanClientSecret) {
-    console.error("❌ KREDENSIAL KOSONG: Variabel SENTINEL_CLIENT_ID atau SECRET tidak ditemukan di file .env");
-    return null;
-  }
-
-  const params = new URLSearchParams();
-  params.append('grant_type', 'client_credentials');
-  params.append('client_id', cleanClientId);
-  params.append('client_secret', cleanClientSecret);
-
+// ================== HELPER: CLOUDINARY UPLOADER ==================
+async function uploadGeeImageToCloudinary(geeImageUrl, petaniId) {
   try {
-    const res = await axios.post(
-      'https://services.sentinel-hub.com/oauth/token', // 🚀 URL API Komersial
-      params, 
-      { 
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, 
-        timeout: 15000 
-      }
-    );
-    return res.data.access_token;
-  } catch (error) {
-    // 2. Cetak alasan penolakan asli ke terminal
-    console.error("❌ GAGAL MENDAPATKAN TOKEN SENTINEL HUB:", error.response?.data || error.message);
-    return null;
+      if (!geeImageUrl) return null;
+
+      const response = await axios.get(geeImageUrl, { responseType: 'arraybuffer' });
+      const buffer = Buffer.from(response.data);
+
+      const uploadResult = await new Promise((resolve, reject) => {
+          const stream = cloudinary.uploader.upload_stream(
+              {
+                  folder: 'agrocelebes_satelit_sawah',
+                  public_id: `sawah_${petaniId}_${Date.now()}`,
+                  resource_type: 'image'
+              },
+              (error, result) => {
+                  if (error) reject(error);
+                  else resolve(result);
+              }
+          );
+          stream.end(buffer);
+      });
+
+      console.log("✅ Gambar satelit berhasil disimpan permanen ke Cloudinary:", uploadResult.secure_url);
+      return uploadResult.secure_url; 
+  } catch (err) {
+      console.error("⚠️ Gagal mengunggah gambar satelit ke Cloudinary:", err.message);
+      return geeImageUrl; // Fallback ke URL GEE jika gagal upload
   }
 }
 
-// 🌟 TARIKAN API BMKG RIIL
+// ================== HELPER: BMKG RIIL ==================
 async function getSkorCuacaDinamis(lat, lng) {
   try {
-    let kodeWilayah = '73.11.04.1001'; // Default Barru
-    if (lat > -4.2 && lng < 119.7) kodeWilayah = '73.72.01.1001'; // Parepare
-    else if (lat > -4.2 && lng >= 119.7) kodeWilayah = '73.14.01.1001'; // Sidrap
-    else if (lat < -4.8) kodeWilayah = '73.09.01.1001'; // Maros
+    let kodeWilayah = '73.11.04.1001'; 
+    if (lat > -4.2 && lng < 119.7) kodeWilayah = '73.72.01.1001'; 
+    else if (lat > -4.2 && lng >= 119.7) kodeWilayah = '73.14.01.1001'; 
+    else if (lat < -4.8) kodeWilayah = '73.09.01.1001'; 
 
-    const response = await axios.get(`https://data.bmkg.go.id/DataMKG/MEWS/DigitalForecast/DigitalForecast-SulawesiSelatan.xml`, { timeout: 8000 });
-    const parser = new xml2js.Parser();
+    const response = await axios.get(
+      'https://data.bmkg.go.id/DataMKG/MEWS/DigitalForecast/DigitalForecast-SulawesiSelatan.xml',
+      { timeout: 8000 }
+    );
+    const parser = new xml2js.Parser({ explicitArray: false });
     const result = await parser.parseStringPromise(response.data);
-    
-    const isDataValid = result && result.data && result.data.forecast;
-    return isDataValid ? 0.85 : 0.70; 
+
+    const areas = result?.data?.forecast?.area;
+    const areaList = Array.isArray(areas) ? areas : [areas];
+    const targetArea = areaList.find(a => a?.$.id === kodeWilayah) || areaList[0];
+
+    if (!targetArea?.parameter) return 0.60;
+
+    const params = Array.isArray(targetArea.parameter) ? targetArea.parameter : [targetArea.parameter];
+    const rainParam = params.find(p => p?.$.id === 'rain');
+
+    let rainValues = [];
+    if (rainParam?.timerange) {
+      const timers = Array.isArray(rainParam.timerange) ? rainParam.timerange : [rainParam.timerange];
+      rainValues = timers.slice(0, 3).map(tr => {
+        const val = tr?.value;
+        const v = Array.isArray(val) ? val[0] : val;
+        return parseFloat(v?._ || v);
+      }).filter(v => !isNaN(v));
+    }
+
+    let avgRain = rainValues.length > 0 ? rainValues.reduce((a, b) => a + b, 0) / rainValues.length : 5;
+
+    let skor;
+    if (avgRain >= 5 && avgRain <= 20) skor = 0.95;
+    else if (avgRain > 20 && avgRain <= 40) skor = 0.75;
+    else if (avgRain > 40) skor = 0.45;
+    else if (avgRain >= 1 && avgRain < 5) skor = 0.70;
+    else skor = 0.40;
+
+    console.log(`🌤️ BMKG ${kodeWilayah}: curah hujan rata-rata ${avgRain.toFixed(1)} mm/hari → skor ${skor}`);
+    return skor;
   } catch (error) {
-    console.warn("⚠️ API BMKG Down, menggunakan fallback skor cuaca 0.65");
-    return 0.65;
+    console.warn("⚠️ API BMKG gagal:", error.message, "— pakai fallback 0.55");
+    return 0.55;
   }
 }
 
+// ================== ENDPOINT UTAMA ==================
 router.post('/analisis/:petaniId', verifikasiToken, authorizeRoles('kud', 'admin'), async (req, res) => {
   try {
     const { petaniId } = req.params;
 
     if (!petaniId || petaniId === 'undefined' || petaniId.length !== 24) {
-      return res.status(400).json({ pesan: 'ID Petani tidak valid atau tidak disertakan.' });
+      return res.status(400).json({ pesan: 'ID Petani tidak valid.' });
     }
 
     const petani = await User.findById(petaniId);
-    if (!petani || !petani.koordinat_lokasi || !petani.koordinat_lokasi.lat) {
+    if (!petani?.koordinat_lokasi?.lat) {
       return res.status(400).json({ pesan: 'Koordinat GPS petani tidak ditemukan.' });
     }
 
-    // 🌟 SIMULASI DEMO: Komentari (matikan) koordinat asli dari database
-    // const { lat, lng } = petani.koordinat_lokasi;
+    // 1. Koordinat Asli & Validasi Wilayah
+    const { lat, lng } = petani.koordinat_lokasi;
 
-    // 🌟 INJEKSI KOORDINAT SAWAH MURNI (Mangkoso, Barru)
-    const lat = -4.4258;
-    const lng = 119.8955;
-
-    const cacheKey = `${lat.toFixed(4)},${lng.toFixed(4)}`;
-    
-    if (ndviCache.has(cacheKey)) {
-      const cachedData = ndviCache.get(cacheKey);
-      
-      if (Date.now() - cachedData.timestamp < CACHE_TTL) {
-        console.log(`⚡ Mengambil data NDVI dari Cache Lokal untuk area: ${cacheKey}`);
-        
-        petani.profil_lahan = {
-          ...petani.profil_lahan,
-          ndvi_score: cachedData.ndvi,
-          radar_fusion_used: cachedData.radarFallback,
-          agro_score_final: cachedData.agroScore,
-          agro_kategori: cachedData.kategori
-        };
-        await petani.save();
-
-        return res.json({ 
-          pesan: `Pemindaian secepat kilat (Cache 7 Hari)`, 
-          ndvi: cachedData.ndvi, 
-          satelit: cachedData.radarFallback ? 'Sentinel-1 (SAR Radar)' : 'Sentinel-2 (Optik)',
-          debug: "Data Cache Lokal"
-        });
-      } else {
-        ndviCache.delete(cacheKey);
-      }
+    if (lat < -11 || lat > 6 || lng < 95 || lng > 141) {
+      return res.status(400).json({ pesan: '❌ Koordinat di luar wilayah Indonesia.' });
     }
-
-    let realNdvi = NaN;
-    const token = await getSentinelToken();
-    
-    if (token) {
-      const offset = 0.0002; 
-      const bbox = [lng - offset, lat - offset, lng + offset, lat + offset];
-
-      const payloadNDVI = {
-        input: {
-          bounds: { bbox: bbox, properties: { crs: "http://www.opengis.net/def/crs/EPSG/0/4326" } },
-          data: [{ type: "sentinel-2-l2a", dataFilter: { maxCloudCoverage: 40 } }]
-        },
-        aggregation: {
-          timeRange: { 
-            from: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
-            to: new Date().toISOString() 
-          },
-          aggregationInterval: { of: "P30D" },
-          evalscript: `
-            function setup() { 
-              return { 
-                input: ["B04", "B08", "dataMask"], 
-                output: [
-                  { id: "default", bands: 1 },
-                  { id: "dataMask", bands: 1 }
-                ] 
-              }; 
-            }
-            function evaluatePixel(sample) { 
-              let ndvi = (sample.B08 - sample.B04) / (sample.B08 + sample.B04);
-              return {
-                default: [ndvi],
-                dataMask: [sample.dataMask]
-              }; 
-            }
-          `
-        }
-      };
-
-      let retries = 3;
-      while (retries > 0 && isNaN(realNdvi)) {
-        try {
-          // 🚀 URL API Komersial Optik
-          const sentinelRes = await axios.post('https://services.sentinel-hub.com/api/v1/statistics', payloadNDVI, {
-            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-            timeout: 15000 
-          });
-          realNdvi = parseFloat(sentinelRes.data.data[0].outputs.default.bands.B0.stats.mean.toFixed(2)); 
-        } catch (apiError) {
-          retries -= 1;
-          if (retries === 0) {
-            // 🌟 MEMBONGKAR ERROR OPTIK
-            console.error("❌ ERROR API OPTIK SENTINEL HUB:", JSON.stringify(apiError.response?.data || apiError.message));
-            console.warn("⚠️ Timeout Optik setelah 3 percobaan. Mode fallback radar akan aktif.");
-          }
-          else await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-      }
-    }
-
-    let finalNdvi = realNdvi;
-    let radarFallbackActive = false;
-
-    // 1. PENANGANAN GAGAL SCAN OPTIK (Awan Tebal) -> FALLBACK KE RADAR SAR RIIL
-    if (isNaN(realNdvi) || realNdvi === null) {
-       radarFallbackActive = true;
-       console.log("☁️ Satelit Optik gagal/terhalang awan. Menembak Radar SAR Sentinel-1...");
-
-       if (token) {
-         try {
-           const offset = 0.0005; 
-           const bbox = [lng - offset, lat - offset, lng + offset, lat + offset];
-           
-           const payloadSAR = {
-             input: {
-               bounds: { bbox: bbox, properties: { crs: "http://www.opengis.net/def/crs/EPSG/0/4326" } },
-               data: [{ type: "sentinel-1-grd", dataFilter: { resolution: "HIGH", acquisitionMode: "IW" } }]
-             },
-             aggregation: {
-               timeRange: { from: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(), to: new Date().toISOString() },
-               aggregationInterval: { of: "P30D" },
-               evalscript: `
-                 function setup() { 
-                   return { 
-                     input: ["VV", "VH", "dataMask"], 
-                     output: [
-                       { id: "default", bands: 1 },
-                       { id: "dataMask", bands: 1 }
-                     ] 
-                   }; 
-                 }
-                 function evaluatePixel(sample) { 
-                   let vh = Math.max(0.0001, sample.VH);
-                   let vv = Math.max(0.0001, sample.VV);
-                   return {
-                     default: [(4 * vh) / (vv + vh) * 0.35],
-                     dataMask: [sample.dataMask]
-                   }; 
-                 }
-               `
-             }
-           };
-
-           // 🚀 URL API Komersial Radar
-           const sarRes = await axios.post('https://services.sentinel-hub.com/api/v1/statistics', payloadSAR, {
-             headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-             timeout: 15000 
-           });
-           
-           const sarMean = sarRes.data?.data?.[0]?.outputs?.default?.bands?.B0?.stats?.mean;
-           
-           if (sarMean === undefined || sarMean === null || isNaN(sarMean)) {
-               throw new Error("Data SAR kosong atau NaN"); 
-           }
-
-           finalNdvi = parseFloat(sarMean.toFixed(2));
-           console.log(`✅ Radar SAR Berhasil mengunci biomassa: ${finalNdvi}`);
-
-         } catch (sarError) {
-           // 🌟 MEMBONGKAR ERROR RADAR
-           console.error("❌ ERROR API RADAR SENTINEL HUB:", JSON.stringify(sarError.response?.data || sarError.message));
-           console.warn("⚠️ API Radar juga gagal/kosong. Mengaktifkan Simulasi Darurat...");
-           
-           if (lat > -4.04 && lat < -4.01 && lng > 119.61 && lng < 119.64) {
-              finalNdvi = -0.15; 
-           } else {
-              const historiNdvi = petani.profil_lahan?.ndvi_score || null;
-              finalNdvi = (historiNdvi && historiNdvi >= 0.20) ? historiNdvi : 0.78; 
-           }
-         }
-       }
-    }
-
-    // 2. 🛑 KILL-SWITCH KLOROFIL (ANTI-BOCOR AREA PERUMAHAN)
-    if (finalNdvi === null || isNaN(finalNdvi) || finalNdvi < 0.40) {
+    if (lat < -6 || lat > -2 || lng < 118 || lng > 121) {
       return res.status(400).json({
-        pesan: `Area tidak valid (Skor Indeks: ${isNaN(finalNdvi) || finalNdvi === null ? 'Gagal Terbaca' : finalNdvi.toFixed(2)}). Kerapatan vegetasi terlalu rendah (Minimal 0.40). Pastikan titik GPS berada tepat di tengah sawah, bukan di area pemukiman.`
+        pesan: '❌ Layanan verifikasi satelit saat ini hanya untuk wilayah Sulawesi Selatan.'
       });
     }
 
-    // 3. EKSEKUSI MESIN AGROSCORE DENGAN DATA BMKG DINAMIS
-    const skorBmkgDinamis = await getSkorCuacaDinamis(lat, lng);
-    const hasilScore = hitungAgroScore(finalNdvi, skorBmkgDinamis, 0.9);
+    // 2. Cek Cache
+    const cacheKey = `${lat.toFixed(4)},${lng.toFixed(4)}`;
+    if (ndviCache.has(cacheKey)) {
+      const cached = ndviCache.get(cacheKey);
+      
+      if ((Date.now() - cached.timestamp < CACHE_TTL) && cached.gambar_sawah) {
+        console.log(`⚡ Cache hit: ${cacheKey}`);
+        petani.profil_lahan = {
+          ...petani.profil_lahan,
+          ndvi_score: cached.ndvi,
+          agro_score_final: cached.agroScore,
+          agro_kategori: cached.kategori,
+          land_cover_kode: cached.landCoverKode,
+          gambar_sawah: cached.gambar_sawah,
+          last_verified: new Date()
+        };
+        await petani.save();
+        return res.json({
+          pesan: `✅ Pemindaian dari cache`,
+          status_lahan: cached.statusVegetasi,
+          ndvi: cached.ndvi,
+          satelit: 'Sentinel-2 (Cache)',
+          land_cover_label: labelLandCover(cached.landCoverKode),
+          agro_score: cached.agroScore,
+          kategori: cached.kategori,
+          koordinat: { lat, lng },
+          gambar_sawah: cached.gambar_sawah,
+          debug: 'Cache Lokal'
+        });
+      }
+      
+      ndviCache.delete(cacheKey);
+    }
 
+    // 3. TUTUPAN LAHAN DIMATIKAN SEMENTARA - GUNAKAN DEFAULT
+    console.log(`🔍 Bypass pengecekan tutupan lahan. Setel default ke 40 (Lahan Pertanian).`);
+    const landCoverKode = 40; 
+
+    // 4. HITUNG NDVI
+    console.log(`📡 Memulai pemindaian NDVI via Google Earth Engine...`);
+    const hasilSatelit = await hitungNdviSatelit(lat, lng);
+
+    if (!hasilSatelit.tersedia) {
+      return res.status(503).json({
+        pesan: `⚠️ ${hasilSatelit.pesan || 'Satelit tidak dapat memindai lahan saat ini.'} Kemungkinan karena awan tebal. Silakan coba lagi dalam 2-3 hari.`,
+        status: 'gagal_teknis'
+      });
+    }
+
+    const finalNdvi = hasilSatelit.ndvi;
+    const urlGeeSementara = hasilSatelit.gambar_url; 
+    console.log(`✅ GEE NDVI: ${finalNdvi}`);
+
+    // 🌟 UPLOAD KE CLOUDINARY AGAR PERMANEN
+    console.log("☁️ Mengamankan gambar satelit ke Cloudinary...");
+    const urlGambarPermanen = await uploadGeeImageToCloudinary(urlGeeSementara, petaniId);
+
+    // 5. LOGIKA BARU: TOLERANSI SAWAH KERING
+    let statusVegetasi = 'Aktif Tumbuh';
+    if (finalNdvi < 0.20) {
+      statusVegetasi = 'Pasca Panen / Lahan Kering';
+      console.log(`ℹ️ Lahan terdeteksi sedang masa istirahat/kering (NDVI: ${finalNdvi}).`);
+    }
+
+    // 6. HITUNG AGROSCORE
+    const skorBmkg = await getSkorCuacaDinamis(lat, lng);
+    const hasilScore = hitungAgroScore(finalNdvi, skorBmkg, 0.9);
+
+    // 7. Simpan ke Cache
     ndviCache.set(cacheKey, {
       ndvi: finalNdvi,
-      radarFallback: radarFallbackActive,
       agroScore: hasilScore.score,
       kategori: hasilScore.kategori,
+      landCoverKode: landCoverKode,
+      statusVegetasi: statusVegetasi,
+      gambar_sawah: urlGambarPermanen, 
       timestamp: Date.now()
     });
 
+    // 8. Simpan ke Database
     petani.profil_lahan = {
       ...petani.profil_lahan,
       ndvi_score: finalNdvi,
-      radar_fusion_used: radarFallbackActive,
       agro_score_final: hasilScore.score,
-      agro_kategori: hasilScore.kategori
+      agro_kategori: hasilScore.kategori,
+      land_cover_kode: landCoverKode,
+      gambar_sawah: urlGambarPermanen, 
+      last_verified: new Date(),
+      koordinat_verified: { lat, lng }
     };
     await petani.save();
+    
+    console.log("📦 SIAP MENGIRIM DATA KE FRONTEND!");
+    console.log("URL Gambar yang dikirim:", urlGambarPermanen);
 
-    res.json({ 
-      pesan: `Pemindaian berhasil via ${radarFallbackActive ? 'Sentinel-1 (SAR Radar)' : 'Sentinel-2 (Optik)'}`, 
-      ndvi: finalNdvi, 
-      satelit: radarFallbackActive ? 'Sentinel-1 (SAR Radar)' : 'Sentinel-2 (Optik)',
-      debug: radarFallbackActive ? "Mode Fallback" : "Satelit Sentinel Hub Langsung"
+    res.json({
+      pesan: `✅ Verifikasi berhasil. Lahan valid.`,
+      status_lahan: statusVegetasi,
+      ndvi: finalNdvi,
+      satelit: 'Sentinel-2 (Google Earth Engine & Cloudinary)',
+      land_cover_label: 'Lahan Pertanian (Mock)',
+      agro_score: hasilScore.score,
+      kategori: hasilScore.kategori,
+      koordinat: { lat, lng },
+      gambar_sawah: urlGambarPermanen 
     });
 
   } catch (error) {
-    console.error("Fatal Error Analisis Satelit:", error);
-    res.status(500).json({ pesan: 'Sistem mengalami gangguan internal.' });
+    console.error("💥 Fatal Error Analisis Satelit (GEE):", error);
+    res.status(500).json({ pesan: 'Sistem mengalami gangguan internal saat menghubungi satelit.' });
   }
 });
 
-module.exports = router;5
+module.exports = router;
