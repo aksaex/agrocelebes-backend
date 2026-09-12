@@ -2,28 +2,46 @@
 const ee = require('@google/earthengine');
 const path = require('path');
 
-// Inisialisasi GEE hanya dilakukan sekali (singleton pattern)
 let isInitialized = false;
 
 async function initGEE() {
   if (isInitialized) {
-    return; // Jika sudah inisialisasi, lewati
+    return;
   }
 
   return new Promise((resolve, reject) => {
     try {
-      // 1. Arahkan ke file JSON kredensial Anda
-      // Sesuaikan nama file jika Anda mengubahnya
-      const privateKey = require(path.join(__dirname, '..', 'agrocelebes-06a369b69250.json'));
+      let privateKey;
 
-      // 2. Lakukan Autentikasi
+      // CEK APAKAH BERJALAN DI VERCEL ATAU LOKAL
+      if (process.env.GOOGLE_CREDENTIALS) {
+        // Mode Produksi (Vercel): Ambil dari satu Environment Variable dan parse
+        console.log("☁️ Menggunakan kredensial GEE dari Environment Vercel (GOOGLE_CREDENTIALS)");
+        try {
+          // Parsing string JSON kembali menjadi objek JavaScript
+          privateKey = JSON.parse(process.env.GOOGLE_CREDENTIALS);
+        } catch (parseError) {
+           console.error("❌ Gagal mem-parsing GOOGLE_CREDENTIALS dari Vercel:", parseError);
+           return reject(new Error("Format JSON di Environment Vercel salah."));
+        }
+      } else {
+        // Mode Lokal (Komputer Anda): Ambil dari file JSON fisik
+        console.log("💻 Menggunakan kredensial GEE dari file lokal");
+        try {
+            privateKey = require(path.join(__dirname, '..', 'agrocelebes-06a369b69250.json'));
+        } catch (fileError) {
+             console.error("❌ File JSON lokal tidak ditemukan!", fileError);
+             return reject(new Error("File kredensial lokal tidak ditemukan."));
+        }
+      }
+
+      // 2. Lakukan Autentikasi dengan kunci yang sudah valid
       ee.data.authenticateViaPrivateKey(
         privateKey,
         () => {
-          // 3. Jika autentikasi berhasil, inisialisasi modul Earth Engine
+          // 3. Inisialisasi
           ee.initialize(
-            null,
-            null,
+            null, null,
             () => {
               console.log('✅ [GEE Service] Berhasil terhubung ke Google Earth Engine');
               isInitialized = true;
@@ -41,7 +59,7 @@ async function initGEE() {
         }
       );
     } catch (error) {
-      console.error('❌ [GEE Service] Gagal memuat file JSON kredensial. Pastikan path file benar.', error);
+      console.error('❌ [GEE Service] Terjadi kesalahan sistem saat memuat kredensial.', error);
       reject(error);
     }
   });
