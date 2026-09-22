@@ -172,6 +172,46 @@ router.put('/:id/verify-land', verifikasiToken, authorizeRoles('kud', 'admin'), 
 });
 
 // ==========================================
+// 🌟 RUTE BARU: PABRIK KUNCI DP (AMBIL KONTRAK)
+// ==========================================
+router.put('/:id/lock-dp', verifikasiToken, authorizeRoles('pabrik', 'admin'), async (req, res) => {
+  try {
+    const escrowId = req.params.id;
+    const escrow = await Escrow.findById(escrowId);
+    
+    if (!escrow) {
+        return res.status(404).json({ pesan: 'Kontrak tidak ditemukan.' });
+    }
+    
+    // Pastikan status kontrak sudah diverifikasi satelit sebelum bisa di-DP
+    if (escrow.status !== 'verifikasi_lahan') {
+        return res.status(400).json({ pesan: 'Kontrak belum divalidasi satelit atau sudah diproses.' });
+    }
+
+    const oldData = escrow.toObject();
+
+    // Catat ID Pabrik yang mengambil kontrak
+    if (req.user.role === 'pabrik') {
+        escrow.pabrik_id = req.user.id;
+    }
+
+    // Ubah status menjadi dp_locked
+    escrow.status = 'dp_locked';
+    escrow.catatan = 'Kontrak diambil offtaker. DP sedang diproses atau telah dibayarkan.';
+    
+    await escrow.save();
+    
+    // Kunci aksi dengan SHA-256
+    await catatAudit(req.user.id, 'LOCK_KONTRAK_DP', 'Escrow', escrow._id, oldData, escrow.toObject());
+
+    res.json({ pesan: 'Kontrak berhasil diambil dan DP dikunci.', escrow });
+  } catch (error) {
+    console.error("Error saat lock-dp:", error);
+    res.status(500).json({ pesan: 'Terjadi kesalahan pada server backend.' });
+  }
+});
+
+// ==========================================
 // 🌟 RUTE ESTAFET: PABRIK SETOR DP + LOGGING
 // ==========================================
 router.put('/:id/pay-dp', verifikasiToken, authorizeRoles('pabrik', 'admin'), async (req, res) => {

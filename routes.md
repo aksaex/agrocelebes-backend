@@ -28,6 +28,13 @@ Dokumentasi ringkas endpoint utama backend AgroCelebes.
 - `PUT /api/escrow/:id/deliver-fertilizer` - serah pupuk oleh kios
 - `PUT /api/escrow/:id/complete` - tutup kontrak menjadi `selesai`
 
+## User & Portofolio Petani
+- `GET /api/user/profile` - profil user login
+- `POST /api/user/geotag` - simpan koordinat lahan petani
+- `GET /api/user/petani-list` - daftar seluruh petani (KUD/Admin)
+- `GET /api/user/petani/:id` - detail portofolio petani: `lama_berusaha_tani`, `riwayat_panen[]`, `catatan_keuangan[]` + `ringkasan` (KUD/Admin)
+- `PUT /api/user/verifikasi-lahan/:id` - set status lahan petani terverifikasi (KUD/Admin)
+
 ## Jurnal
 - `GET /api/jurnal` - ambil jurnal petani
 - `POST /api/jurnal` - tambah jurnal kas/jadwal

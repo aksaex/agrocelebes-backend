@@ -7,15 +7,19 @@ async function hitungNdviSatelit(lat, lng) {
         try {
             const point = ee.Geometry.Point([lng, lat]);
             
-            // Perbesar area buffer menjadi 150 meter agar cakupan lahan lebih luas
-            const area = point.buffer(150);
+            // 🌟 1. AREA VISUAL (LUAS): Radius 1000 meter untuk foto agar tajam dan menangkap konteks sekitar
+            const visualArea = point.buffer(1000); 
+
+            // 🌟 2. AREA DATA (SEMPIT): Radius 30 meter untuk perhitungan NDVI agar akurat di lahan petani saja
+            const ndviArea = point.buffer(30);
 
             const endDate = new Date();
             const startDate = new Date();
             startDate.setDate(endDate.getDate() - 60);
 
+            // Filter menggunakan visualArea agar gambar mencakup wilayah luas
             const imageCollection = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-                .filterBounds(area)
+                .filterBounds(visualArea)
                 .filterDate(startDate.toISOString().split('T')[0], endDate.toISOString().split('T')[0])
                 .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 30));
 
@@ -26,7 +30,7 @@ async function hitungNdviSatelit(lat, lng) {
 
                 const bestImage = imageCollection.sort('system:time_start', false).first();
 
-                // Visualisasi True Color (RGB: Red, Green, Blue)
+                // Visualisasi True Color
                 const visualImage = bestImage.visualize({
                     bands: ['B4', 'B3', 'B2'],
                     min: 0,
@@ -34,12 +38,11 @@ async function hitungNdviSatelit(lat, lng) {
                     gamma: 1.4
                 });
 
-                // Ambil URL Thumbnail dengan resolusi tinggi
                 console.log("📸 Meminta URL gambar ke Google Earth Engine...");
                 const imageUrl = await new Promise((resUrl) => {
                     visualImage.getThumbURL({
-                        region: area, // Ambil batas area (bounding box)
-                        dimensions: 600,       // Naikkan dimensi dari 400 ke 800px agar tidak pecah
+                        region: visualArea, // Gunakan area luas untuk gambar
+                        dimensions: 800,    
                         format: 'png'
                     }, (url, err) => {
                         if (err) {
@@ -55,9 +58,10 @@ async function hitungNdviSatelit(lat, lng) {
                 // Hitung NDVI: (NIR - RED) / (NIR + RED)
                 const ndviImage = bestImage.normalizedDifference(['B8', 'B4']);
 
+                // Tarik nilai rata-rata NDVI menggunakan area sempit (ndviArea)
                 const ndviValue = ndviImage.reduceRegion({
                     reducer: ee.Reducer.mean(),
-                    geometry: area,
+                    geometry: ndviArea, // Gunakan area sempit agar fokus pada sawah
                     scale: 10,
                     maxPixels: 1e9
                 });

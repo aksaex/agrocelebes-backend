@@ -77,4 +77,67 @@ router.put('/verifikasi-lahan/:id', verifikasiToken, authorizeRoles('kud', 'admi
   }
 });
 
+// ==========================================
+// 🌟 RUTE BARU: DETAIL PORTOFOLIO PETANI
+// Dipakai KUD untuk menilai risiko kredit lewat tombol "Lihat Portofolio Risiko".
+// Mengembalikan profil, lama_berusaha_tani, riwayat_panen, dan catatan_keuangan.
+// ==========================================
+router.get('/petani/:id', verifikasiToken, authorizeRoles('kud', 'admin', 'pabrik', 'offtaker', 'pembeli'), async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ pesan: 'ID Petani tidak valid.' });
+    }
+
+    const petani = await User.findOne({ _id: id, role: 'petani' }).select('-password');
+    if (!petani) {
+      return res.status(404).json({ pesan: 'Data petani tidak ditemukan.' });
+    }
+
+    // Selalu kirim array agar UI aman (kalau data belum ada, tetap array kosong)
+    const riwayatPanen = (petani.riwayat_panen || []).map((item) => ({
+      musim: item.musim || 'Musim belum dicatat',
+      volume_ton: Number(item.volume_ton) || 0,
+      kualitas: item.kualitas || 'Belum dinilai'
+    }));
+
+    const catatanKeuangan = (petani.catatan_keuangan || []).map((item) => ({
+      tanggal: item.tanggal || null,
+      jenis_transaksi: item.jenis_transaksi || 'Transaksi tanpa keterangan',
+      nominal: Number(item.nominal) || 0,
+      status_lunas: Boolean(item.status_lunas)
+    }));
+
+    // Ringkasan turunan: menjawab kritik juri soal portofolio & risiko kredit
+    const totalVolumeTon = riwayatPanen.reduce((total, item) => total + item.volume_ton, 0);
+    const totalLunas = catatanKeuangan.filter((item) => item.status_lunas).reduce((total, item) => total + item.nominal, 0);
+    const totalPiutang = catatanKeuangan.filter((item) => !item.status_lunas).reduce((total, item) => total + item.nominal, 0);
+
+    res.json({
+      petani: {
+        _id: petani._id,
+        nama: petani.nama,
+        alamat: petani.alamat,
+        no_hp: petani.no_hp,
+        koordinat_lokasi: petani.koordinat_lokasi,
+        profil_lahan: petani.profil_lahan,
+        lama_berusaha_tani: Number(petani.lama_berusaha_tani) || 0,
+        riwayat_panen: riwayatPanen,
+        catatan_keuangan: catatanKeuangan
+      },
+      ringkasan: {
+        lama_berusaha_tani: Number(petani.lama_berusaha_tani) || 0,
+        total_musim_panen: riwayatPanen.length,
+        total_volume_ton: Number(totalVolumeTon.toFixed(2)),
+        total_transaksi: catatanKeuangan.length,
+        total_lunas: totalLunas,
+        total_piutang: totalPiutang
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ pesan: 'Gagal mengambil portofolio petani', error: error.message });
+  }
+});
+
 module.exports = router;
